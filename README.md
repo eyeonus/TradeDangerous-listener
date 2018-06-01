@@ -8,7 +8,38 @@ At this point in time, this program must be in the same folder as TD's "trade.py
 
 Once I've got all the standard features taken care of, I may add the ability to install this anywhere, with a prompt to get the path to trade.py so it'll still work.
 
-To run this for yourself, nothing needs to be done. The configuration file will be generated automatically at first launch. If you wish to, you may make changes to the configuration, doing so will require stopping and restarting the program before the changes take effect.
+# Standard features
+- Listens to the Elite Dangerous Data Network (EDDN) for market updates from whitelisted sources and updates TD's database. The whitelist can be configured, default allowed clients are E:D Market Connector, EDDiscovery, and EDDI. (TODO)
+
+- Automatically checks for updates from EDDB.io (server-side) or Tromador's mirror (client-side) and runs the EDDBlink plugin with the option 'all' when it detects one. (Instances of this running as server will additionally run with the 'fallback' option to download the updates directly from EDDB.io instead of the mirror. Since the only server expected to be running is Tromador's, this makes perfect sense.) Delay between checks is 1 hour by default, can be changed in the configuration file, under the setting "check_delay_in_sec".
+
+- If configured as server, will automatically export the currently stored prices listings from TD's database in the file "listings.csv", which will be located in the folder "<TD install>\data\eddb". The duration between subsequent exports is 5 minutes by default, can be configured in the configuration file, under the setting "export_every_x_sec". (TODO) 
+
+# Running
+The configuration file is automatically created with default settings on first run. If you wish to, you may make changes to the configuration, doing so will require stopping and restarting the program before the changes take effect.
+
+To run this for yourself, nothing needs to be done.
 
 To run as a server, change the "side" value in the configuration file to "server".
-Doing so will make the EDDB dump update checker look at EDDB.io directly, rather than  Tromador's mirror (elite.ripz.org), as well as turning on the prices exporter, which will cause the file "listings.csv" to be created from the TD DB in the "data\eddb\" folder periodically, determined by the "export_every_x_sec" setting in the configuration file.
+
+# Configuration file
+The configuration file, by default, looks like the following:
+
+----------------
+{
+    "check_delay_in_sec" : 3600,
+    "export_every_x_sec" : 300,
+    "side": "server",
+    "whitelist":
+    [
+        { "software":"E:D Market Connector [Windows]" },
+        { "software":"E:D Market Connector [Mac OS]" },
+        { "software":"E:D Market Connector [Linux]" },
+        { "software":"EDDiscovery" },
+        { "software":"eddi",
+            "minversion":"2.2" }
+    ]
+}
+----------------
+
+If you wish, you may copy this as "eddblink-listener-config.json" in the same folder as the program itself and make any changes to it before running the program, in order to avoid having to run it, waiting for the default config file to be created, stopping it, making the changes, and then running the program again.  
