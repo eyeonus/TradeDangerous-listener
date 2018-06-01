@@ -14,6 +14,7 @@ from calendar import timegm
 from pathlib import Path
 from collections import defaultdict, namedtuple, deque
 from distutils.version import LooseVersion
+from macpath import curdir
 
 
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
@@ -349,6 +350,9 @@ def load_config():
             
 def process_messages():
     global process_ack
+    tdb = tradedb.TradeDB(load=False)
+    db = tdb.getDB()
+
     while go:
         if update_busy:
             print("Message processor acknowledging busy signal.")
@@ -391,52 +395,78 @@ def export_listings():
     For server use only.
     """
     global export_ack
-    while go:
-        
-        now = time.time()
-        
-        """
-        insert export code here
-        
-        """
-        
-        while time.time() < now + config['export_every_x_sec']:
-            if update_busy:
-                print("Listings exporter acknowledging busy signal.")
-                export_ack = True
-                while update_busy:
-                    pass
-                export_ack = False
-                print("Busy signal off, listings exporter resuming.")
+    if config['side'] == 'server':
+        tdb = tradedb.TradeDB(load=False)
+        db = tdb.getDB()
+        listings_file = dataPath / Path("eddb") / Path("listings.csv")
 
-            if not go:
-                print("Shutting down Listings exporter.")
-                break
-            
+        while go:
+        
+            now = time.time()
+            try:
+                cur = db.execute("SELECT * FROM StationItem ORDER BY station_id")
+            except sqlite3.DatabaseError:
+                continue
+        
+            print("Exporting 'listings.csv'.")
+            with open(str(listings_file), "w") as f:
+                f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
+                lineNo = 1
+                for result in cur:
+                    station_id = str(result[0])
+                    commodity_id = str(result[1])
+                    sell_price = str(result[2])
+                    demand = str(result[3])
+                    demand_bracket = str(result[4])
+                    buy_price = str(result[5])
+                    supply = str(result[6])
+                    supply_bracket = str(result[7])
+                    collected_at = str(timegm(datetime.datetime.strptime(result[8],'%Y-%m-%d %H:%M:%S').timetuple()))
+                    line = str(lineNo)
+                    lineNo += 1
+                    for insert in (station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at):
+                        line += "," + insert
+                    f.write(line + "\n")
+            print("Export complete.")
+
+            while time.time() < now + config['export_every_x_sec']:
+                if update_busy:
+                    print("Listings exporter acknowledging busy signal.")
+                    export_ack = True
+                    while update_busy:
+                        pass
+                    export_ack = False
+                    print("Busy signal off, listings exporter resuming.")
+
+                if not go:
+                    print("Shutting down Listings exporter.")
+                    break
+    else:
+        export_ack = True
 
 
 go = True
-update_busy = False
-process_ack = False
-export_ack = True
 q = deque()
 config = load_config()
+print(config)
 
-tdb = tradedb.TradeDB()
-dataPath = tdb.dataPath
+update_busy = False
+process_ack = False
+export_ack = False
 
+dataPath = Path(tradeenv.TradeEnv().dataDir).resolve()
+
+print("Press CTRL-C at any time to quit gracefully.")
 try:
-    print("Press CTRL-C at any time to quit gracefully.")
     update_thread = threading.Thread(target=check_update)
-    update_thread.start()
     listener_thread = threading.Thread(target=get_messages)
-    listener_thread.start()
     process_thread = threading.Thread(target=process_messages)
+    export_thread = threading.Thread(target=export_listings)
+    
+    export_thread.start()
+    update_thread.start()
+    listener_thread.start()
     process_thread.start()
-    if config['side'] == 'server':
-        export_ack = False
-        export_thread = threading.Thread(target=export_listings)
-        export_thread.start()
     while True:
         time.sleep(1)
 except KeyboardInterrupt:
