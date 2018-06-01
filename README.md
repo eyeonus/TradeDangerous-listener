@@ -25,7 +25,7 @@ To run as a server, change the "side" value in the configuration file to "server
 # Configuration file
 The configuration file, by default, looks like the following:
 
-
+```
 {
     "check_delay_in_sec" : 3600,
     "export_every_x_sec" : 300,
@@ -40,6 +40,6 @@ The configuration file, by default, looks like the following:
             "minversion":"2.2" }
     ]
 }
-
+```
 
 If you wish, you may copy this as "eddblink-listener-config.json" in the same folder as the program itself and make any changes to it before running the program, in order to avoid having to run it, waiting for the default config file to be created, stopping it, making the changes, and then running the program again.  
