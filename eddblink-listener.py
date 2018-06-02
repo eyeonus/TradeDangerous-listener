@@ -9,6 +9,9 @@ import tradeenv
 import transfers
 import urllib
 import datetime
+import sqlite3
+import csv
+import codecs
 
 from calendar import timegm
 from pathlib import Path
@@ -62,8 +65,8 @@ class Listener(object):
     def __init__(
         self,
         zmqContext=None,
-        minBatchTime=3.,       # seconds
-        maxBatchTime=5.,       # seconds
+        minBatchTime=15,       # seconds
+        maxBatchTime=45,       # seconds
         reconnectTimeout=30.,  # seconds
         burstLimit=500,
     ):
@@ -347,7 +350,7 @@ def load_config():
     with open("eddblink-listener-config.json", "rU") as fh:
         config = json.load(fh)
     return config
-            
+
 def process_messages():
     global process_ack
     tdb = tradedb.TradeDB(load=False)
@@ -369,23 +372,74 @@ def process_messages():
             continue
         system = entry.system
         station = entry.station
-        timestamp = entry.timestamp
+        modified = entry.timestamp.replace('T',' ').replace('Z','')
         commodities= entry.commodities
-        if commodities[0]["name"] == commodities[0]["name"].lower():
-            print(entry.software + " v." + entry.version + " uses lowercase: " + commodities[0]["name"])
+
+        result = db.execute("""SELECT station_id FROM Station WHERE name = ? 
+                                    AND system_id = (SELECT System.system_id FROM System WHERE System.name = ?)""",\
+                                (station, system)).fetchone()
+        if result:
+            station_id = result[0]
+        else:
+            print("ERROR: Not found in Station table: " + system + "/" + station)
+            continue
         
-        """
-        insert processing code here
-        
-        Values needed:
-        station_id, item_id, demand_price, demand_units, demand_level, supply_price, supply_units, supply_level, modified
-        
-        Conversions required:
-        system + station -> station_id      table:Station
-        commodity['name'] -> item_id        table:Commodity
-        timestamp -> modified
-        
-        """
+        print("Messages waiting: " + str(len(q)))
+        print(str(datetime.datetime.now()) + " - Updating " + system + "/" + station + " with data updated at: " + modified + " UTC")
+        for commodity in commodities:
+            #Get item_id using commodity name from message.
+            name = commodity['name'].lower()
+            try:
+                result = db.execute("SELECT item_id FROM Item WHERE name LIKE '%" + db_name[name] + "%'").fetchone()
+                if result:
+                    item_id = result[0]
+                else:
+                    print("ERROR: Not found in Item table: " + db_name[name])
+                    continue
+            except keyError:
+                print("ERROR: Commodity not found: " + commodity['name'])
+            demand_price = commodity['sellPrice']
+            demand_units = commodity['demand']
+            demand_level = commodity['demandBracket'] if commodity['demandBracket'] != '' else -1
+            supply_price = commodity['buyPrice']
+            supply_units = commodity['stock']
+            supply_level = commodity['stockBracket'] if commodity['stockBracket'] != '' else -1            
+            result = db.execute("SELECT station_id FROM StationItem WHERE station_id = ? AND item_id = ?", (station_id, item_id)).fetchone()
+            if result:
+                try:
+                    db.execute("""UPDATE StationItem
+                        SET modified = ?,
+                         demand_price = ?, demand_units = ?, demand_level = ?,
+                         supply_price = ?, supply_units = ?, supply_level = ?
+                        WHERE station_id = ? AND item_id = ?""",
+                        (modified, 
+                         demand_price, demand_units, demand_level, 
+                         supply_price, supply_units, supply_level,
+                        station_id, item_id))
+                except sqlite3.IntegrityError:
+                    pass
+            else:
+                try:
+                    db.execute("""INSERT INTO StationItem
+                        (station_id, item_id, modified,
+                         demand_price, demand_units, demand_level,
+                         supply_price, supply_units, supply_level)
+                        VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ? )""",
+                        (station_id, item_id, modified,
+                        demand_price, demand_units, demand_level,
+                        supply_price, supply_units, supply_level))
+                except sqlite3.IntegrityError:
+                    pass
+
+            success = False
+            while not success:
+                try:
+                    db.commit()
+                except sqlite3.DatabaseError:
+                    time.sleep(1)
+                    continue
+                success = True
+        print(str(datetime.datetime.now()) + " - Finished updating market data for " + system + "/" + station)
         
     print("Shutting down message processor.")
 
@@ -404,11 +458,11 @@ def export_listings():
         
             now = time.time()
             try:
-                cur = db.execute("SELECT * FROM StationItem ORDER BY station_id")
+                cur = db.execute("SELECT * FROM StationItem ORDER BY station_id, item_id")
             except sqlite3.DatabaseError:
                 continue
         
-            print("Exporting 'listings.csv'.")
+            print("Exporting 'listings.csv'. " + str(datetime.datetime.now()))
             with open(str(listings_file), "w") as f:
                 f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
                 lineNo = 1
@@ -423,11 +477,11 @@ def export_listings():
                     supply_bracket = str(result[7])
                     collected_at = str(timegm(datetime.datetime.strptime(result[8],'%Y-%m-%d %H:%M:%S').timetuple()))
                     line = str(lineNo)
-                    lineNo += 1
                     for insert in (station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at):
                         line += "," + insert
                     f.write(line + "\n")
-            print("Export complete.")
+                    lineNo += 1
+            print("Export complete. " + str(datetime.datetime.now()))
 
             while time.time() < now + config['export_every_x_sec']:
                 if update_busy:
@@ -448,11 +502,28 @@ def export_listings():
 go = True
 q = deque()
 config = load_config()
-print(config)
 
 update_busy = False
 process_ack = False
 export_ack = False
+
+# We'll use this to convert the name of the items given in the EDDN messages into the names TD uses.
+db_name = dict()
+edmc_source = 'https://raw.githubusercontent.com/Marginal/EDMarketConnector/master/commodity.csv'
+edmc_csv = urllib.request.urlopen(edmc_source)
+edmc_dict = csv.DictReader(codecs.iterdecode(edmc_csv, 'utf-8'))
+for line in iter(edmc_dict):
+    db_name[line['symbol'].lower()] = line['name']
+#A few of these don't match between EDMC and EDDB, so we fix them individually.
+db_name['airelics'] = 'Ai Relics'
+db_name['drones'] = 'Limpet'
+db_name['liquidoxygen'] = 'Liquid Oxygen'
+db_name['methanolmonohydratecrystals'] = 'Methanol Monohydrate'
+db_name['coolinghoses'] = 'Micro-Weave Cooling Hoses'
+db_name['nonlethalweapons'] = 'Non-lethal Weapons'
+db_name['sap8corecontainer'] = 'Sap 8 Core Container'
+db_name['trinketsoffortune'] = 'Trinkets Of Hidden Fortune'
+db_name['wreckagecomponents'] = 'Salvageable Wreckage'
 
 dataPath = Path(tradeenv.TradeEnv().dataDir).resolve()
 
