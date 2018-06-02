@@ -65,8 +65,8 @@ class Listener(object):
     def __init__(
         self,
         zmqContext=None,
-        minBatchTime=15,       # seconds
-        maxBatchTime=45,       # seconds
+        minBatchTime=3.,       # seconds
+        maxBatchTime=5.,       # seconds
         reconnectTimeout=30.,  # seconds
         burstLimit=500,
     ):
@@ -396,7 +396,7 @@ def process_messages():
                 else:
                     print("ERROR: Not found in Item table: " + db_name[name])
                     continue
-            except keyError:
+            except KeyError:
                 print("ERROR: Commodity not found: " + commodity['name'])
             demand_price = commodity['sellPrice']
             demand_units = commodity['demand']
@@ -431,14 +431,14 @@ def process_messages():
                 except sqlite3.IntegrityError:
                     pass
 
-            success = False
-            while not success:
-                try:
-                    db.commit()
-                except sqlite3.DatabaseError:
-                    time.sleep(1)
-                    continue
-                success = True
+        success = False
+        while not success:
+            try:
+                db.commit()
+            except sqlite3.DatabaseError:
+                time.sleep(1)
+                continue
+            success = True
         print(str(datetime.datetime.now()) + " - Finished updating market data for " + system + "/" + station)
         
     print("Shutting down message processor.")
