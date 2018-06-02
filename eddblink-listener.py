@@ -319,7 +319,10 @@ def check_update():
             while not (process_ack and export_ack):
                 pass
             print("Busy signal acknowledged, performing EDDB dump update.")
-            trade.main(('trade.py','import','-P','eddblink','-O','all,fallback' if config['side'] == "server" else 'all'))
+            options = "all,skipvend,force"
+            if config['side'] == "server":
+                options += ",fallback"
+            trade.main(('trade.py','import','-P','eddblink','-O',options))
             print("Update complete, turning off busy signal.")
             update_busy = False
         else:
@@ -386,18 +389,22 @@ def process_messages():
         
         print("Messages waiting: " + str(len(q)))
         print(str(datetime.datetime.now()) + " - Updating " + system + "/" + station + " with data updated at: " + modified + " UTC")
+        # I know the slowdown is inside this for loop, but I don't know exactly where, yet.
         for commodity in commodities:
             #Get item_id using commodity name from message.
-            name = commodity['name'].lower()
             try:
-                result = db.execute("SELECT item_id FROM Item WHERE name LIKE '%" + db_name[name] + "%'").fetchone()
-                if result:
-                    item_id = result[0]
-                else:
-                    print("ERROR: Not found in Item table: " + db_name[name])
-                    continue
+                name = db_name[commodity['name'].lower()]
             except KeyError:
                 print("ERROR: Commodity not found: " + commodity['name'])
+                continue
+            
+            result = db.execute("SELECT item_id FROM Item WHERE name = ?", (name,)).fetchone()
+            if result:
+                item_id = result[0]
+            else:
+                print("ERROR: Not found in Item table: " + name)
+                continue
+            
             demand_price = commodity['sellPrice']
             demand_units = commodity['demand']
             demand_level = commodity['demandBracket'] if commodity['demandBracket'] != '' else -1
@@ -526,6 +533,20 @@ db_name['trinketsoffortune'] = 'Trinkets Of Hidden Fortune'
 db_name['wreckagecomponents'] = 'Salvageable Wreckage'
 
 dataPath = Path(tradeenv.TradeEnv().dataDir).resolve()
+
+"""
+# Doesn't look like adding an index to the table helps at all with the speed. Argh.
+tdb = tradedb.TradeDB(load=False)
+with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
+    tmpFile = fh.read()
+firstRun = (tmpFile.find('CREATE INDEX idx_item_by_name ON Item (name);') != -1)
+if firstRun:
+    print("Adding index to Item table to speed message processing. Requires rebuilding database.")
+    tmpFile = tmpFile.replace(');\n\n\nCREATE TABLE StationItem', ');\nCREATE INDEX idx_item_by_name ON Item (name);\n\nCREATE TABLE StationItem')
+    with tdb.sqlPath.open('w', encoding = "utf-8") as fh:
+        fh.write(tmpFile)
+    tdb.reloadCache()
+"""
 
 print("Press CTRL-C at any time to quit gracefully.")
 try:
