@@ -1,3 +1,4 @@
+from __future__ import generators
 import json
 import time
 import zlib
@@ -331,6 +332,7 @@ def check_update():
                 if not go:
                     print("Shutting down update checker.")
                     break
+                time.sleep(1)
                 
 def load_config():
     if not Path.exists(Path("eddblink-listener-config.json")):
@@ -387,7 +389,6 @@ def process_messages():
             continue
         
         start_update = datetime.datetime.now()
-        print("(Messages waiting: " + str(len(q)) + ") Updating " + system + "/" + station + " with data updated at: " + modified + " UTC")
         for commodity in commodities:
             # Get item_id using commodity name from message.
             try:
@@ -441,11 +442,20 @@ def process_messages():
                 time.sleep(1)
                 continue
             success = True
-        print("Finished updating market data for " + system + "/" + station\
+        print("(Messages waiting: " + str(len(q)) + ") Finished updating market data for " + system + "/" + station\
                + " in " + str(datetime.datetime.now() - start_update) + " seconds.")
         
     print("Shutting down message processor.")
 
+def fetchIter(cursor, arraysize=1000):
+    'An iterator that uses fetchmany to keep memory usage down'
+    while True:
+        results = cursor.fetchmany(arraysize)
+        if not results:
+            break
+        for result in results:
+            yield result
+            
 def export_listings():
     """
     Creates a "listings.csv" file in <TD install location>\data\eddb every X seconds as defined in the configuration file.
@@ -455,23 +465,25 @@ def export_listings():
 
     if config['side'] == 'server':
         tdb = tradedb.TradeDB(load=False)
-        db = tdb.getDB()
+        cur = tdb.getDB().cursor()
         listings_file = dataPath / Path("eddb") / Path("listings.csv")
 
         while go:
             now = time.time()
             start = datetime.datetime.now()
 
-            print("Listings exporter sending busy signal.")
+            print("Listings exporter sending busy signal. " + str(start))
             export_busy = True
             while not (process_ack):
                 pass
             try:
-                results = db.execute("SELECT * FROM StationItem ORDER BY station_id, item_id")
+                results = list(fetchIter(cur.execute("SELECT * FROM StationItem ORDER BY station_id, item_id")))
             except sqlite3.DatabaseError:
+                export_busy = False
                 continue
+            export_busy = False
             
-            print("Exporting 'listings.csv'. ")
+            print("Exporting 'listings.csv'. (Got listings in " + str(datetime.datetime.now() - start) + ")")
             with open(str(listings_file), "w") as f:
                 f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
                 lineNo = 1
@@ -491,9 +503,11 @@ def export_listings():
                              + collected_at + "\n")
                     lineNo += 1
             print("Export completed in " + str(datetime.datetime.now() - start))
-            export_busy = False
 
             while time.time() < now + config['export_every_x_sec']:
+                if not go:
+                    print("Shutting down listings exporter.")
+                    break
                 if update_busy:
                     print("Listings exporter acknowledging busy signal.")
                     export_ack = True
@@ -503,9 +517,6 @@ def export_listings():
                         export_ack = False
                         print("Busy signal off, listings exporter resuming.")
 
-                if not go:
-                    print("Shutting down listings exporter.")
-                    break
     else:
         export_ack = True
 
