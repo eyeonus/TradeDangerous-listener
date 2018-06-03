@@ -469,7 +469,22 @@ def export_listings():
         listings_file = dataPath / Path("eddb") / Path("listings.csv")
 
         while go:
+            
             now = time.time()
+            
+            while time.time() < now + config['export_every_x_sec']:
+                if not go:
+                    break
+                if update_busy:
+                    print("Listings exporter acknowledging busy signal.")
+                    export_ack = True
+                    while update_busy and go:
+                        time.sleep(1)
+                    export_ack = False
+                    if not go:
+                        break
+                    print("Busy signal off, listings exporter resuming.")
+
             start = datetime.datetime.now()
 
             print("Listings exporter sending busy signal. " + str(start))
@@ -504,18 +519,7 @@ def export_listings():
                     lineNo += 1
             print("Export completed in " + str(datetime.datetime.now() - start))
 
-            while time.time() < now + config['export_every_x_sec']:
-                if not go:
-                    print("Shutting down listings exporter.")
-                    break
-                if update_busy:
-                    print("Listings exporter acknowledging busy signal.")
-                    export_ack = True
-                    while update_busy and go:
-                        time.sleep(1)
-                    if go:
-                        export_ack = False
-                        print("Busy signal off, listings exporter resuming.")
+        print("Shutting down listings exporter.")
 
     else:
         export_ack = True
@@ -580,10 +584,11 @@ try:
     process_thread = threading.Thread(target=process_messages)
     export_thread = threading.Thread(target=export_listings)
     
-    export_thread.start()
     update_thread.start()
+    time.sleep(5)
     listener_thread.start()
     process_thread.start()
+    export_thread.start()
     while True:
         time.sleep(1)
 except KeyboardInterrupt:
