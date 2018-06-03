@@ -379,8 +379,6 @@ def process_messages():
             continue
         system = entry.system
         station = entry.station
-        modified = entry.timestamp.replace('T',' ').replace('Z','')
-        commodities= entry.commodities
         
         try:
             station_id = station_ids[system.upper() + "/" + station.upper()]
@@ -388,6 +386,9 @@ def process_messages():
             print("ERROR: Not found in Stations: " + system + "/" + station)
             continue
         
+        modified = entry.timestamp.replace('T',' ').replace('Z','')
+        commodities= entry.commodities
+
         start_update = datetime.datetime.now()
         for commodity in commodities:
             # Get item_id using commodity name from message.
