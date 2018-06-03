@@ -484,6 +484,7 @@ def export_listings():
                     if not go:
                         break
                     print("Busy signal off, listings exporter resuming.")
+                    now = time.time()
 
             start = datetime.datetime.now()
 
