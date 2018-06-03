@@ -65,8 +65,8 @@ class Listener(object):
     def __init__(
         self,
         zmqContext=None,
-        minBatchTime=3.,       # seconds
-        maxBatchTime=5.,       # seconds
+        minBatchTime=36.,       # seconds
+        maxBatchTime=60.,       # seconds
         reconnectTimeout=30.,  # seconds
         burstLimit=500,
     ):
@@ -360,12 +360,14 @@ def process_messages():
     db = tdb.getDB()
 
     while go:
-        if update_busy:
+        if update_busy or export_busy:
             print("Message processor acknowledging busy signal.")
             process_ack = True
-            while update_busy:
-                pass
+            while (update_busy or export_busy) and go:
+                time.sleep(1)
             process_ack = False
+            if not go:
+                break
             print("Busy signal off, message processor resuming.")
 
         try:
@@ -377,42 +379,45 @@ def process_messages():
         station = entry.station
         modified = entry.timestamp.replace('T',' ').replace('Z','')
         commodities= entry.commodities
-
-        result = db.execute("""SELECT station_id FROM Station WHERE name = ? 
-                                    AND system_id = (SELECT System.system_id FROM System WHERE System.name = ?)""",\
-                                (station, system)).fetchone()
-        if result:
-            station_id = result[0]
-        else:
-            print("ERROR: Not found in Station table: " + system + "/" + station)
+        
+        try:
+            station_id = station_ids[system.upper() + "/" + station.upper()]
+        except KeyError:
+            print("ERROR: Not found in Stations: " + system + "/" + station)
             continue
         
-        print("Messages waiting: " + str(len(q)))
-        print(str(datetime.datetime.now()) + " - Updating " + system + "/" + station + " with data updated at: " + modified + " UTC")
-        # I know the slowdown is inside this for loop, but I don't know exactly where, yet.
+        start_update = datetime.datetime.now()
+        print("(Messages waiting: " + str(len(q)) + ") Updating " + system + "/" + station + " with data updated at: " + modified + " UTC")
         for commodity in commodities:
-            #Get item_id using commodity name from message.
+            # Get item_id using commodity name from message.
             try:
                 name = db_name[commodity['name'].lower()]
             except KeyError:
                 print("ERROR: Commodity not found: " + commodity['name'])
                 continue
-            
-            result = db.execute("SELECT item_id FROM Item WHERE name = ?", (name,)).fetchone()
-            if result:
-                item_id = result[0]
-            else:
-                print("ERROR: Not found in Item table: " + name)
+            # Some items, mostly RareItems, are found in db_name but not in item_ids
+            try:
+                item_id = item_ids[name]
+            except KeyError:
+                print("ERROR: Not found in Items: '" + name + "'")
                 continue
-            
+                
             demand_price = commodity['sellPrice']
             demand_units = commodity['demand']
             demand_level = commodity['demandBracket'] if commodity['demandBracket'] != '' else -1
             supply_price = commodity['buyPrice']
             supply_units = commodity['stock']
-            supply_level = commodity['stockBracket'] if commodity['stockBracket'] != '' else -1            
-            result = db.execute("SELECT station_id FROM StationItem WHERE station_id = ? AND item_id = ?", (station_id, item_id)).fetchone()
-            if result:
+            supply_level = commodity['stockBracket'] if commodity['stockBracket'] != '' else -1
+            try:
+                db.execute("""INSERT INTO StationItem
+                    (station_id, item_id, modified,
+                     demand_price, demand_units, demand_level,
+                     supply_price, supply_units, supply_level)
+                    VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ? )""",
+                    (station_id, item_id, modified,
+                    demand_price, demand_units, demand_level,
+                    supply_price, supply_units, supply_level))
+            except sqlite3.IntegrityError:
                 try:
                     db.execute("""UPDATE StationItem
                         SET modified = ?,
@@ -425,28 +430,19 @@ def process_messages():
                         station_id, item_id))
                 except sqlite3.IntegrityError:
                     pass
-            else:
-                try:
-                    db.execute("""INSERT INTO StationItem
-                        (station_id, item_id, modified,
-                         demand_price, demand_units, demand_level,
-                         supply_price, supply_units, supply_level)
-                        VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ? )""",
-                        (station_id, item_id, modified,
-                        demand_price, demand_units, demand_level,
-                        supply_price, supply_units, supply_level))
-                except sqlite3.IntegrityError:
-                    pass
 
         success = False
-        while not success:
+        # Don't try to commit if there are still messages waiting,
+        # retry commit until it succeeds.
+        while not success and len(q) == 0:
             try:
                 db.commit()
             except sqlite3.DatabaseError:
                 time.sleep(1)
                 continue
             success = True
-        print(str(datetime.datetime.now()) + " - Finished updating market data for " + system + "/" + station)
+        print("Finished updating market data for " + system + "/" + station\
+               + " in " + str(datetime.datetime.now() - start_update) + " seconds.")
         
     print("Shutting down message processor.")
 
@@ -455,25 +451,31 @@ def export_listings():
     Creates a "listings.csv" file in <TD install location>\data\eddb every X seconds as defined in the configuration file.
     For server use only.
     """
-    global export_ack
+    global export_ack, export_busy
+
     if config['side'] == 'server':
         tdb = tradedb.TradeDB(load=False)
         db = tdb.getDB()
         listings_file = dataPath / Path("eddb") / Path("listings.csv")
 
         while go:
-        
             now = time.time()
+            start = datetime.datetime.now()
+
+            print("Listings exporter sending busy signal.")
+            export_busy = True
+            while not (process_ack):
+                pass
             try:
-                cur = db.execute("SELECT * FROM StationItem ORDER BY station_id, item_id")
+                results = db.execute("SELECT * FROM StationItem ORDER BY station_id, item_id")
             except sqlite3.DatabaseError:
                 continue
-        
-            print("Exporting 'listings.csv'. " + str(datetime.datetime.now()))
+            
+            print("Exporting 'listings.csv'. ")
             with open(str(listings_file), "w") as f:
                 f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
                 lineNo = 1
-                for result in cur:
+                for result in results:
                     station_id = str(result[0])
                     commodity_id = str(result[1])
                     sell_price = str(result[2])
@@ -483,24 +485,26 @@ def export_listings():
                     supply = str(result[6])
                     supply_bracket = str(result[7])
                     collected_at = str(timegm(datetime.datetime.strptime(result[8],'%Y-%m-%d %H:%M:%S').timetuple()))
-                    line = str(lineNo)
-                    for insert in (station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at):
-                        line += "," + insert
-                    f.write(line + "\n")
+                    f.write(str(lineNo) + "," + station_id + "," + commodity_id + ","\
+                             + supply + "," + supply_bracket + "," + buy_price + ","\
+                             + sell_price + "," + demand + "," + demand_bracket + ","\
+                             + collected_at + "\n")
                     lineNo += 1
-            print("Export complete. " + str(datetime.datetime.now()))
+            print("Export completed in " + str(datetime.datetime.now() - start))
+            export_busy = False
 
             while time.time() < now + config['export_every_x_sec']:
                 if update_busy:
                     print("Listings exporter acknowledging busy signal.")
                     export_ack = True
-                    while update_busy:
-                        pass
-                    export_ack = False
-                    print("Busy signal off, listings exporter resuming.")
+                    while update_busy and go:
+                        time.sleep(1)
+                    if go:
+                        export_ack = False
+                        print("Busy signal off, listings exporter resuming.")
 
                 if not go:
-                    print("Shutting down Listings exporter.")
+                    print("Shutting down listings exporter.")
                     break
     else:
         export_ack = True
@@ -513,6 +517,7 @@ config = load_config()
 update_busy = False
 process_ack = False
 export_ack = False
+export_busy = False
 
 # We'll use this to convert the name of the items given in the EDDN messages into the names TD uses.
 db_name = dict()
@@ -534,19 +539,28 @@ db_name['wreckagecomponents'] = 'Salvageable Wreckage'
 
 dataPath = Path(tradeenv.TradeEnv().dataDir).resolve()
 
-"""
-# Doesn't look like adding an index to the table helps at all with the speed. Argh.
-tdb = tradedb.TradeDB(load=False)
-with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
-    tmpFile = fh.read()
-firstRun = (tmpFile.find('CREATE INDEX idx_item_by_name ON Item (name);') != -1)
-if firstRun:
-    print("Adding index to Item table to speed message processing. Requires rebuilding database.")
-    tmpFile = tmpFile.replace(');\n\n\nCREATE TABLE StationItem', ');\nCREATE INDEX idx_item_by_name ON Item (name);\n\nCREATE TABLE StationItem')
-    with tdb.sqlPath.open('w', encoding = "utf-8") as fh:
-        fh.write(tmpFile)
-    tdb.reloadCache()
-"""
+# We'll use this to get the item_id from the item's name because it's faster than a database lookup.
+item_ids = dict()
+with open(str(dataPath / Path("Item.csv")), "rU") as fh:
+    items = csv.DictReader(fh, quotechar="'")
+    for item in items:
+        item_ids[item['name']] =  int(item['unq:item_id'])
+
+# We're using this for the same reason. 
+system_names = dict()
+with open(str(dataPath / Path("System.csv")), "rU") as fh:
+    systems = csv.DictReader(fh, quotechar="'")
+    for system in systems:
+        system_names[int(system['unq:system_id'])] = system['name'].upper()
+
+station_ids = dict()
+with open(str(dataPath / Path("Station.csv")), "rU") as fh:
+    stations = csv.DictReader(fh, quotechar="'")
+    for station in stations:
+        full_name = system_names[int(station['system_id@System.system_id'])] + "/" + station['name'].upper()
+        station_ids[full_name] = int(station['unq:station_id'])
+    
+del system_names
 
 print("Press CTRL-C at any time to quit gracefully.")
 try:
