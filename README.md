@@ -6,7 +6,7 @@ An EDDN listener, designed to work in conjunction with the EDDBlink plugin ( htt
 
 - At this point in time, this program must be in the same folder as TD's "trade.py".
 
-- EDDN is a 0MQ network, so this program uses the 'zmq' module. You may need to install zmq before this will run by running 'pip install zmq' in a Command Prompt / Terminal.
+- EDDN is a 0MQ network, so this program uses the 'zmq' module. You may need to install zmq before this will run by running 'pip install pyzmq' in a Command Prompt / Terminal.
 
 # Features
 - Listens to the Elite Dangerous Data Network (EDDN) for market updates from whitelisted sources and updates TD's database. The whitelist can be configured, default allowed clients are E:D Market Connector, EDDiscovery, and EDDI (These three (especially EDMC)  account for ~97% of all messages on the EDDN).
