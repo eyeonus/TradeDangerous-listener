@@ -1,5 +1,6 @@
 .*.sw?
 .sw?
+.settings/
 __pycache__/
 logs/
 out/
@@ -12,6 +13,7 @@ data/
 mfd/
 misc/
 plugins/
+/plugins/
 scripts/
 tmp/
 cache.py

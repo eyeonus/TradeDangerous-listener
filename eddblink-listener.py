@@ -339,9 +339,9 @@ def load_config():
         print("Writing default configuration.")
         with open("eddblink-listener-config.json", "w") as config_file:
             config_file.writelines(['{\n',
+                                    '    "side": "client",\n',
                                     '    "check_delay_in_sec" : 3600,\n',
                                     '    "export_every_x_sec" : 300,\n',
-                                    '    "side": "client",\n',
                                     '    "export_path": "./data/eddb",\n'
                                     '    "whitelist":\n',
                                     '    [\n',
@@ -583,14 +583,14 @@ del system_names
 
 print("Press CTRL-C at any time to quit gracefully.")
 try:
-    update_thread = threading.Thread(target=check_update)
     listener_thread = threading.Thread(target=get_messages)
+    update_thread = threading.Thread(target=check_update)
     process_thread = threading.Thread(target=process_messages)
     export_thread = threading.Thread(target=export_listings)
     
+    listener_thread.start()
     update_thread.start()
     time.sleep(5)
-    listener_thread.start()
     process_thread.start()
     export_thread.start()
     while True:

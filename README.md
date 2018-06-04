@@ -13,7 +13,7 @@ An EDDN listener, designed to work in conjunction with the EDDBlink plugin ( htt
 
 - Automatically checks for updates from EDDB.io (server-side) or Tromador's mirror (client-side) and runs the EDDBlink plugin with the options 'all,skipvend,force' when it detects one. (Instances of this running as server will additionally run with the 'fallback' option to download the updates directly from EDDB.io instead of the mirror. Since the only server expected to be running is Tromador's, this makes perfect sense.) Delay between checks is 1 hour by default, can be changed in the configuration file, under the setting "check_delay_in_sec".
 
-- If configured as server, will automatically export the currently stored prices listings from TD's database in the file "listings.csv", which will be located in the folder "<TD install>\data\eddb". The duration between subsequent exports is 5 minutes by default, can be configured in the configuration file, under the setting "export_every_x_sec".
+- If configured as server, will automatically export the currently stored prices listings from TD's database in the file "listings.csv", which will be located in the folder named in the "export_path" setting, which defaults to "<TD install>\data\eddb". The duration between subsequent exports is 5 minutes by default, and can be configured in the configuration file, under the setting "export_every_x_sec".
 
 # Running
 Running the program is simple: open a Command Prompt (Windows) / Terminal (Linux/OSX), go to the folder this program is located at, and type 'python eddblink-listener.py". You'll know you did it right when you see "Press CTRL-C at any time to quit gracefully." Once you see that, you can simply minimize the window and let it do its thing.
@@ -34,10 +34,10 @@ The configuration file, by default, looks like the following:
 
 ```
 {
+    "side": "client",
     "check_delay_in_sec" : 3600,
     "export_every_x_sec" : 300,
     "export_path": "./data/eddb",
-    "side": "client",
     "whitelist":
     [
         { "software":"E:D Market Connector [Windows]" },
