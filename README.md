@@ -29,7 +29,8 @@ The configuration file, by default, looks like the following:
 {
     "check_delay_in_sec" : 3600,
     "export_every_x_sec" : 300,
-    "side": "client",
+    "side": "server",
+    "export_path": "./data/eddb",
     "whitelist":
     [
         { "software":"E:D Market Connector [Windows]" },
