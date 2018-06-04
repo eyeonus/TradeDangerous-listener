@@ -342,6 +342,7 @@ def load_config():
                                     '    "check_delay_in_sec" : 3600,\n',
                                     '    "export_every_x_sec" : 300,\n',
                                     '    "side": "client",\n',
+                                    '    "export_path": "./data/eddb",\n'
                                     '    "whitelist":\n',
                                     '    [\n',
                                     '        { "software":"E:D Market Connector [Windows]" },\n',
@@ -467,7 +468,8 @@ def export_listings():
     if config['side'] == 'server':
         tdb = tradedb.TradeDB(load=False)
         cur = tdb.getDB().cursor()
-        listings_file = dataPath / Path("eddb") / Path("listings.csv")
+        listings_file = (Path(config['export_path']) / Path("listings.csv")).resolve()
+        print(listings_file)
 
         while go:
             
