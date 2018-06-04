@@ -445,7 +445,7 @@ def process_messages():
                 continue
             success = True
         print("(In queue: " + str(len(q)) + ") Market update for " + system + "/" + station\
-               + "finished  in " + str(datetime.datetime.now() - start_update) + " seconds.")
+               + " finished  in " + str(datetime.datetime.now() - start_update) + " seconds.")
         
     print("Shutting down message processor.")
 
