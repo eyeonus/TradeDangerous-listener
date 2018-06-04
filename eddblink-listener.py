@@ -444,8 +444,8 @@ def process_messages():
                 time.sleep(1)
                 continue
             success = True
-        print("(Messages waiting: " + str(len(q)) + ") Finished updating market data for " + system + "/" + station\
-               + " in " + str(datetime.datetime.now() - start_update) + " seconds.")
+        print("(In queue: " + str(len(q)) + ") Market update for " + system + "/" + station\
+               + "finished  in " + str(datetime.datetime.now() - start_update) + " seconds.")
         
     print("Shutting down message processor.")
 
@@ -469,7 +469,7 @@ def export_listings():
         tdb = tradedb.TradeDB(load=False)
         cur = tdb.getDB().cursor()
         listings_file = (Path(config['export_path']) / Path("listings.csv")).resolve()
-        print(listings_file)
+        print("Listings will be exported to: \n\t" + str(listings_file))
 
         while go:
             
