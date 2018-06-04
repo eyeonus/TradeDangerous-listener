@@ -2,13 +2,13 @@
 An EDDN listener, designed to work in conjunction with the EDDBlink plugin ( https://github.com/eyeonus/EDDBlink ) for Trade Dangerous, and of course, TD itself.
 
 # Notes
-This program requires both TD and EDDBlink to be installed on the same machine as this in order to work.
+- This program requires both TD and EDDBlink to be installed on the same machine as this in order to work.
 
-At this point in time, this program must be in the same folder as TD's "trade.py".
+- At this point in time, this program must be in the same folder as TD's "trade.py".
 
-Once I've got all the standard features taken care of, I may add the ability to install this anywhere, with a prompt to get the path to trade.py so it'll still work, if people really want that.
+- EDDN is a 0MQ network, so this program uses the 'zmq' module. You may need to install zmq before this will run by running 'pip install zmq' in a Command Prompt / Terminal.
 
-# Standard features
+# Features
 - Listens to the Elite Dangerous Data Network (EDDN) for market updates from whitelisted sources and updates TD's database. The whitelist can be configured, default allowed clients are E:D Market Connector, EDDiscovery, and EDDI (These three (especially EDMC)  account for ~97% of all messages on the EDDN).
 
 - Automatically checks for updates from EDDB.io (server-side) or Tromador's mirror (client-side) and runs the EDDBlink plugin with the options 'all,skipvend,force' when it detects one. (Instances of this running as server will additionally run with the 'fallback' option to download the updates directly from EDDB.io instead of the mirror. Since the only server expected to be running is Tromador's, this makes perfect sense.) Delay between checks is 1 hour by default, can be changed in the configuration file, under the setting "check_delay_in_sec".
@@ -16,21 +16,28 @@ Once I've got all the standard features taken care of, I may add the ability to 
 - If configured as server, will automatically export the currently stored prices listings from TD's database in the file "listings.csv", which will be located in the folder "<TD install>\data\eddb". The duration between subsequent exports is 5 minutes by default, can be configured in the configuration file, under the setting "export_every_x_sec".
 
 # Running
-The configuration file is automatically created with default settings on first run. If you wish to, you may make changes to the configuration, doing so will require stopping and restarting the program before the changes take effect.
+Running the program is simple: open a Command Prompt (Windows) / Terminal (Linux/OSX), go to the folder this program is located at, and type 'python eddblink-listener.py". You'll know you did it right when you see "Press CTRL-C at any time to quit gracefully." Once you see that, you can simply minimize the window and let it do its thing.
 
-To run this for yourself, nothing needs to be done.
+To close the program in a way that will definitely not muck up the database, press CTRL-C. This will send a "keyboard interrupt", also known as SIGINT, to the program, letting it know you want it to stop, and it will shut down all its processes cleanly.
+(If you're on a Mac and CTRL-C doesn't work, try '⌘-.' (Command-period).)
 
-To run as a server, change the "side" value in the configuration file to "server".
+Closing the program any other way, such as closing the terminal window, can potentially lead to a corrupt database.
 
 # Configuration file
+The configuration file is automatically created with default settings on first run. If you wish to, you may make changes to the configuration, doing so will require stopping and restarting the program before the changes take effect.
+
+To run this for yourself, nothing needs to be done to the configuration file.
+
+To run as a server, change the "side" setting from "client" to "server".
+
 The configuration file, by default, looks like the following:
 
 ```
 {
     "check_delay_in_sec" : 3600,
     "export_every_x_sec" : 300,
-    "side": "server",
     "export_path": "./data/eddb",
+    "side": "client",
     "whitelist":
     [
         { "software":"E:D Market Connector [Windows]" },
