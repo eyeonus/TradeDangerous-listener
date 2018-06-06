@@ -396,13 +396,13 @@ def process_messages():
             try:
                 name = db_name[commodity['name'].lower()]
             except KeyError:
-                print("ERROR: Commodity not found: " + commodity['name'])
+                print("Ignoring rare item: " + commodity['name'])
                 continue
             # Some items, mostly RareItems, are found in db_name but not in item_ids
             try:
                 item_id = item_ids[name]
             except KeyError:
-                print("ERROR: Not found in Items: '" + name + "'")
+                print("EDDB.io does not include likely salvage item: '" + name + "'")
                 continue
                 
             demand_price = commodity['sellPrice']
