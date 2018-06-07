@@ -279,7 +279,7 @@ def check_update():
         next_check += str(s) + " second"
         if s > 1:
             next_check += "s"
-
+            
     while go:
         now = time.time()
         commodities_path = Path('eddb') / Path('commodities.json')
@@ -311,7 +311,7 @@ def check_update():
             localModded = (dataPath / commodities_path).stat().st_mtime
         #Trigger daily EDDB update if the dumps have updated since last run.
         #Otherwise, go to sleep for an hour before checking again.
-        if localModded < dumpModded:
+        if localModded < dumpModded or firstRun:
             # TD will fail with an error if the database is in use while it's trying
             # to do its thing, so we need to make sure that neither of the database
             # editing methods are doing anything before running.
@@ -532,6 +532,25 @@ def export_listings():
 go = True
 q = deque()
 config = load_config()
+
+tdb = tradedb.TradeDB(load=False)
+with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
+    tmpFile = fh.read()
+
+firstRun = (tmpFile.find('system_id INTEGER PRIMARY KEY AUTOINCREMENT') != -1)
+
+if firstRun:
+    print("EDDBlink plugin has not been run at least once, running now.")
+
+while firstRun:
+    trade.main(('trade.py','import','-P','eddblink','-O','clean,skipvend'))
+    with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
+        tmpFile = fh.read()
+    firstRun = (tmpFile.find('system_id INTEGER PRIMARY KEY AUTOINCREMENT') != -1)
+    if not firstRun:
+        print("Finished running EDDBlink plugin, no need to run again.")
+
+
 
 update_busy = False
 process_ack = False
