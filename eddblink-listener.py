@@ -398,7 +398,7 @@ def process_messages():
             except KeyError:
                 print("Ignoring rare item: " + commodity['name'])
                 continue
-            # Some items, mostly RareItems, are found in db_name but not in item_ids
+            # Some items, mostly salvage items, are found in db_name but not in item_ids
             try:
                 item_id = item_ids[name]
             except KeyError:
