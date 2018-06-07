@@ -351,11 +351,13 @@ def load_config():
     if not Path.exists(Path("eddblink-listener-config.json")):
         print("Writing default configuration.")
         with open("eddblink-listener-config.json", "w") as config_file:
+            # [MarkAusten] Added the message_output property and value.
             config_file.writelines(['{\n',
                                     '    "side": "client",\n',
                                     '    "check_delay_in_sec" : 3600,\n',
                                     '    "export_every_x_sec" : 300,\n',
                                     '    "export_path": "./data/eddb",\n'
+                                    '    "message_output": "verbose",\n'
                                     '    "whitelist":\n',
                                     '    [\n',
                                     '        { "software":"E:D Market Connector [Windows]" },\n',
@@ -418,14 +420,16 @@ def process_messages():
             try:
                 name = db_name[commodity['name'].lower()]
             except KeyError:
-                print("Ignoring rare item: " + commodity['name'])
+                # [MarkAusten] Changed from print() to the new log_to_console method
+                log_to_console("Ignoring rare item: " + commodity['name'], "")
                 continue
             # Some items, mostly salvage items, are found in db_name but not in item_ids
             # (This is entirely EDDB.io's fault.)
             try:
                 item_id = item_ids[name]
             except KeyError:
-                print("EDDB.io does not include likely salvage item: '" + name + "'")
+                # [MarkAusten] Changed from print() to the new log_to_console method
+                log_to_console("EDDB.io does not include likely salvage item: '" + name + "'", "")
                 continue
             
             demand_price = commodity['sellPrice']
@@ -467,9 +471,12 @@ def process_messages():
                 time.sleep(1)
                 continue
             success = True
-        print("(In queue: " + str(len(q)) + ") Market update for " + system + "/" + station\
-               + " finished in " + str(datetime.datetime.now() - start_update) + " seconds.")
-        
+
+            # [MarkAusten] Changed from print() to the new log_to_console method
+            log_to_console("(In queue: " + str(len(q)) + ") Market update for " + system + "/" + station\
+                  + " finished in " + str(datetime.datetime.now() - start_update) + " seconds.",\
+				  "Updated " + system + "/" + station)
+		
     print("Shutting down message processor.")
 
 def fetchIter(cursor, arraysize=1000):
@@ -563,12 +570,26 @@ def export_listings():
         export_ack = True
 
 
+def log_to_console(verbose_message, concise_message):
+    # [MarkAusten] If the verbose flag is set then print the verbose message
+    # [MarkAusten] otherwise print the concise message if provided
+    if verbose:
+        print(verbose_message)
+    else:
+        if concise_message:
+            print(concise_message)
+
 go = True
 q = deque()
 config = load_config()
 
-# First, check to make sure that EDDBlink plugin has made the changes
-# that need to be made for this thing to work correctly.
+# [MarkAusten] Set the verbose flag from the config settings. If not found then verbose is assumed.
+# [MarkAusten] Note: This only checks for a 'verbose' setting, anything else is assumed to be 'concise'.
+if 'message_output' in config:
+    verbose = config['message_output'] == 'verbose'
+else:
+    verbose = True
+
 tdb = tradedb.TradeDB(load=False)
 with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
     tmpFile = fh.read()
