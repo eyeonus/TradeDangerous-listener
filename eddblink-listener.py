@@ -311,7 +311,7 @@ def check_update():
             localModded = (dataPath / commodities_path).stat().st_mtime
         #Trigger daily EDDB update if the dumps have updated since last run.
         #Otherwise, go to sleep for an hour before checking again.
-        if localModded < dumpModded or firstRun:
+        if localModded < dumpModded:
             # TD will fail with an error if the database is in use while it's trying
             # to do its thing, so we need to make sure that neither of the database
             # editing methods are doing anything before running.
@@ -541,16 +541,9 @@ firstRun = (tmpFile.find('system_id INTEGER PRIMARY KEY AUTOINCREMENT') != -1)
 
 if firstRun:
     print("EDDBlink plugin has not been run at least once, running now.")
-
-while firstRun:
+    print("command: 'python trade.py import -P eddblink -O clean,skipvend'")
     trade.main(('trade.py','import','-P','eddblink','-O','clean,skipvend'))
-    with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
-        tmpFile = fh.read()
-    firstRun = (tmpFile.find('system_id INTEGER PRIMARY KEY AUTOINCREMENT') != -1)
-    if not firstRun:
-        print("Finished running EDDBlink plugin, no need to run again.")
-
-
+    print("Finished running EDDBlink plugin, no need to run again.")
 
 update_busy = False
 process_ack = False
