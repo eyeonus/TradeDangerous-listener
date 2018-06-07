@@ -260,6 +260,9 @@ def get_messages():
 
 def check_update():
     global update_busy
+    
+    # Convert the number from the "check_delay_in_sec" setting, which is in seconds,
+    # into easily readable hours, minutes, seconds.
     m, s = divmod(config['check_delay_in_sec'], 60)
     h, m = divmod(m, 60)
     next_check = ""
@@ -280,13 +283,20 @@ def check_update():
         if s > 1:
             next_check += "s"
             
+    # The following values only need to be assigned once, no need to be in the while loop.
+    commodities_path = Path('eddb') / Path('commodities.json')
+    BASE_URL = "http://elite.ripz.org/files/"
+    FALLBACK_URL = "https://eddb.io/archive/v5/"
+    COMMODITIES = "commodities.json"
+    Months = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6, 'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
+       
     while go:
         now = time.time()
-        commodities_path = Path('eddb') / Path('commodities.json')
-        BASE_URL = "http://elite.ripz.org/files/"
-        FALLBACK_URL = "https://eddb.io/archive/v5/"
-        COMMODITIES = "commodities.json"
     
+        dumpModded = 0
+        localModded = 0
+        
+        # We want to get the files from Tromador's mirror, but it's down we'll go to EDDB.io directly, instead.         
         if config['side'] == 'client':
             try:
                 urllib.request.urlopen(BASE_URL + COMMODITIES)
@@ -295,10 +305,10 @@ def check_update():
                 url = FALLBACK_URL + COMMODITIES
         else:
             url = FALLBACK_URL + COMMODITIES
-        dumpModded = 0
-        localModded = 0
 
-        Months = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6, 'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
+        # Need to parse the "Last-Modified" header into a Unix-epoch, and Python's strptime()
+        # won't work because it is locale-dependent, meaning it would only work in English-
+        # speaking countries.
         dDL = urllib.request.urlopen(url).getheader("Last-Modified").split(' ')
         dTL = dDL[4].split(':')
 
@@ -307,10 +317,12 @@ def check_update():
             tzinfo=datetime.timezone.utc)
         dumpModded = timegm(dumpDT.timetuple())
 
+        # Now that we have the Unix epoch time of the dump file, get the same from the local file.
         if Path.exists(dataPath / commodities_path):
             localModded = (dataPath / commodities_path).stat().st_mtime
-        #Trigger daily EDDB update if the dumps have updated since last run.
-        #Otherwise, go to sleep for an hour before checking again.
+            
+        # Trigger daily EDDB update if the dumps have updated since last run.
+        # Otherwise, go to sleep for an hour before checking again.
         if localModded < dumpModded:
             # TD will fail with an error if the database is in use while it's trying
             # to do its thing, so we need to make sure that neither of the database
@@ -335,6 +347,7 @@ def check_update():
                 time.sleep(1)
                 
 def load_config():
+    # Need to create the default configuration file if one does not exist yet.
     if not Path.exists(Path("eddblink-listener-config.json")):
         print("Writing default configuration.")
         with open("eddblink-listener-config.json", "w") as config_file:
@@ -353,6 +366,7 @@ def load_config():
                                     '            "minversion":"2.2" }\n',
                                     '    ]\n',
                                     '}\n'])
+    # Load the configuration file into a usable json object. 
     with open("eddblink-listener-config.json", "rU") as fh:
         config = json.load(fh)
     return config
@@ -363,21 +377,29 @@ def process_messages():
     db = tdb.getDB()
 
     while go:
+        # We don't want the theads intefering with each other,
+        # so pause this one if either the update checker or
+        # listings exporter report that they're active.
         if update_busy or export_busy:
             print("Message processor acknowledging busy signal.")
             process_ack = True
             while (update_busy or export_busy) and go:
                 time.sleep(1)
             process_ack = False
+            # Just in case we caught the shutdown command while waiting.
             if not go:
                 break
             print("Busy signal off, message processor resuming.")
 
+        # Either get the first message in the queue,
+        # or go to sleep and wait if there aren't any.
         try:
             entry = q.popleft()
         except IndexError:
             time.sleep(1)
             continue
+        
+        # Get the station_is using the system and station names.
         system = entry.system
         station = entry.station
         
@@ -399,12 +421,13 @@ def process_messages():
                 print("Ignoring rare item: " + commodity['name'])
                 continue
             # Some items, mostly salvage items, are found in db_name but not in item_ids
+            # (This is entirely EDDB.io's fault.)
             try:
                 item_id = item_ids[name]
             except KeyError:
                 print("EDDB.io does not include likely salvage item: '" + name + "'")
                 continue
-                
+            
             demand_price = commodity['sellPrice']
             demand_units = commodity['demand']
             demand_level = commodity['demandBracket'] if commodity['demandBracket'] != '' else -1
@@ -450,7 +473,10 @@ def process_messages():
     print("Shutting down message processor.")
 
 def fetchIter(cursor, arraysize=1000):
-    'An iterator that uses fetchmany to keep memory usage down'
+    """
+    An iterator that uses fetchmany to keep memory usage down
+    and speed up the time to retrieve the results dramatically.
+    """
     while True:
         results = cursor.fetchmany(arraysize)
         if not results:
@@ -460,8 +486,9 @@ def fetchIter(cursor, arraysize=1000):
             
 def export_listings():
     """
-    Creates a "listings.csv" file in <TD install location>\data\eddb every X seconds as defined in the configuration file.
-    For server use only.
+    Creates a "listings.csv" file in "export_path" every X seconds,
+    as defined in the configuration file.
+    Only runs when program configured as server.
     """
     global export_ack, export_busy
 
@@ -475,6 +502,9 @@ def export_listings():
             
             now = time.time()
             
+            # Wait until the time specified in the "export_every_x_sec" config
+            # before doing an export, watch for busy signal or shutdown signal
+            # while waiting. 
             while time.time() < now + config['export_every_x_sec']:
                 if not go:
                     break
@@ -484,6 +514,7 @@ def export_listings():
                     while update_busy and go:
                         time.sleep(1)
                     export_ack = False
+                    # Just in case we caught the shutdown command while waiting.
                     if not go:
                         break
                     print("Busy signal off, listings exporter resuming.")
@@ -493,6 +524,9 @@ def export_listings():
 
             print("Listings exporter sending busy signal. " + str(start))
             export_busy = True
+            # We don't need to wait for acknowledgement from the update checker,
+            # because it waits for one from this, and this won't acknowledge
+            # until it's finished exporting.
             while not (process_ack):
                 pass
             try:
@@ -533,12 +567,15 @@ go = True
 q = deque()
 config = load_config()
 
+# First, check to make sure that EDDBlink plugin has made the changes
+# that need to be made for this thing to work correctly.
 tdb = tradedb.TradeDB(load=False)
 with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
     tmpFile = fh.read()
 
 firstRun = (tmpFile.find('system_id INTEGER PRIMARY KEY AUTOINCREMENT') != -1)
 
+# EDDBlink plugin has not made the changes, time to fix that.
 if firstRun:
     print("EDDBlink plugin has not been run at least once, running now.")
     print("command: 'python trade.py import -P eddblink -O clean,skipvend'")
@@ -577,7 +614,7 @@ with open(str(dataPath / Path("Item.csv")), "rU") as fh:
     for item in items:
         item_ids[item['name']] =  int(item['unq:item_id'])
 
-# We're using this for the same reason. 
+# We're using these two for the same reason. 
 system_names = dict()
 with open(str(dataPath / Path("System.csv")), "rU") as fh:
     systems = csv.DictReader(fh, quotechar="'")
@@ -590,7 +627,8 @@ with open(str(dataPath / Path("Station.csv")), "rU") as fh:
     for station in stations:
         full_name = system_names[int(station['system_id@System.system_id'])] + "/" + station['name'].upper()
         station_ids[full_name] = int(station['unq:station_id'])
-    
+
+# system_names has served its use and is no longer needed, so free up the memory it's taking.
 del system_names
 
 print("Press CTRL-C at any time to quit gracefully.")
@@ -602,6 +640,8 @@ try:
     
     listener_thread.start()
     update_thread.start()
+    # Give the update checker enough time to see if an update is needed,
+    # before starting the message processor and listings exporter.
     time.sleep(5)
     process_thread.start()
     export_thread.start()
