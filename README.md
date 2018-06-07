@@ -4,6 +4,8 @@ An EDDN listener, designed to work in conjunction with the EDDBlink plugin ( htt
 # Notes
 - This program requires both TD and EDDBlink to be installed on the same machine as this in order to work.
 
+- This program will automatically run the EDDBlink plugin, so there's no /need/ for you to ever do it yourself.
+
 - At this point in time, this program must be in the same folder as TD's "trade.py".
 
 - EDDN is a 0MQ network, so this program uses the 'zmq' module. You may need to install zmq before this will run by running 'pip install pyzmq' in a Command Prompt / Terminal.
