@@ -586,7 +586,7 @@ config = load_config()
 # [MarkAusten] Set the verbose flag from the config settings. If not found then verbose is assumed.
 # [MarkAusten] Note: This only checks for a 'verbose' setting, anything else is assumed to be 'concise'.
 if 'message_output' in config:
-    verbose = config['message_output'] == 'verbose'
+    verbose = config['message_output'].lower() == 'verbose'
 else:
     verbose = True
 
