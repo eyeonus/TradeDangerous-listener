@@ -685,4 +685,8 @@ try:
         time.sleep(1)
 except KeyboardInterrupt:
     print("CTRL-C detected, stopping.")
+    if config['side'] == 'server':
+        print("Please wait for all four processes to report they are finished, in case they are currently active.")
+    else:
+        print("Please wait for all three processes to report they are finished, in case they are currently active.")
     go = False
