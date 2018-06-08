@@ -407,11 +407,17 @@ def load_config():
     return config
 
 def validate_config():
+    """
+    Checks to make sure the loaded config contains valid values.
+    If it finds any invalid, it marks that as such in the config_file
+    so the default value is used on reload, and then reloads the config.
+    """
     global config
     valid = True
     with open("eddblink-listener-config.json", "r") as fh:
         config_file = fh.read()
-        
+    
+    # For each of these settings, if the value is invalid, mark the key.
     config['side'] = config['side'].lower()
     if config['side'] != 'server' and config['side'] != 'client':
         valid = False
@@ -442,6 +448,8 @@ def validate_config():
         config_file = config_file.replace('"export_path"','"export_path_invalid"')
         
     if not valid:
+        # Before we reload the config to set the invalid values back to default,
+        # we need to write the changes we made to the file.
         with open("eddblink-listener-config.json", "w") as fh:
             fh.write(config_file)
         config = load_config()
