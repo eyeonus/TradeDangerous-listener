@@ -13,7 +13,7 @@ An EDDN listener, designed to work in conjunction with the EDDBlink plugin ( htt
 # Features
 - Listens to the Elite Dangerous Data Network (EDDN) for market updates from whitelisted sources and updates TD's database. The whitelist can be configured, default allowed clients are E:D Market Connector, EDDiscovery, and EDDI (These three (especially EDMC)  account for ~97% of all messages on the EDDN).
 
-- Automatically checks for updates from EDDB.io (server-side) or Tromador's mirror (client-side) and runs the EDDBlink plugin with the options 'all,skipvend,force' when it detects one. (Instances of this running as server will additionally run with the 'fallback' option to download the updates directly from EDDB.io instead of the mirror. Since the only server expected to be running is Tromador's, this makes perfect sense.) Delay between checks is 1 hour by default, can be changed in the configuration file, under the setting "check_delay_in_sec".
+- Automatically checks for updates from EDDB.io (server-side) or Tromador's mirror (client-side) and runs the EDDBlink plugin with the options specified in the setting "plugin_options", which by default is 'all,skipvend,force', when it detects one. (Instances of this running as server will additionally run with the 'fallback' option to download the updates directly from EDDB.io instead of the mirror. Since the only server expected to be running is Tromador's, this makes perfect sense.) Delay between checks is 1 hour by default, can be changed in the configuration file, under the setting "check_delay_in_sec". **See the README.md for EDDBlink plugin for more information on available run options.**
 
 - If configured as server, will automatically export the currently stored prices listings from TD's database in the file "listings.csv", which will be located in the folder named in the "export_path" setting, which defaults to "<TD install>\data\eddb". The duration between subsequent exports is 5 minutes by default, and can be configured in the configuration file, under the setting "export_every_x_sec".
 
@@ -38,6 +38,7 @@ The configuration file, by default, looks like the following:
 {
     "side": "client",
     "verbose": true,
+    "plugin_options": "all,skipvend,force",
     "check_delay_in_sec": 3600,
     "export_every_x_sec": 300,
     "export_path": "./data/eddb",

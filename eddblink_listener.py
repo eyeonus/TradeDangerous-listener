@@ -333,7 +333,7 @@ def check_update():
             while not (process_ack and export_ack):
                 pass
             print("Busy signal acknowledged, performing EDDB dump update.")
-            options = "all,skipvend,force"
+            options = config['plugin_options']
             if config['side'] == "server":
                 options += ",fallback"
             trade.main(('trade.py','import','-P','eddblink','-O',options))
@@ -362,6 +362,7 @@ def load_config():
     config = OrderedDict([\
                             ('side', 'client'),                                                      \
                             ('verbose', True),                                                       \
+                            ('plugin_options', "all,skipvend,force"),                                                       \
                             ('check_delay_in_sec', 3600),                                            \
                             ('export_every_x_sec', 300),                                             \
                             ('export_path', './data/eddb'),                                          \
