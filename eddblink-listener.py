@@ -481,7 +481,9 @@ def process_messages():
         try:
             station_id = station_ids[system.upper() + "/" + station.upper()]
         except KeyError:
-            print("ERROR: Not found in Stations: " + system + "/" + station)
+            # [MarkAusten] Skip output if not verbose
+            if config['verbose']:
+                print("ERROR: Not found in Stations: " + system + "/" + station)
             continue
         
         modified = entry.timestamp.replace('T',' ').replace('Z','')
