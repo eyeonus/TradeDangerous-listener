@@ -355,7 +355,7 @@ def load_config():
     preserving the existing (if any) settings' current values.
     """
     
-    need_create = False
+    write_config = False
     # Initialize config with default settings.
     # NOTE: Whitespace added for readability.
     config = OrderedDict([\
