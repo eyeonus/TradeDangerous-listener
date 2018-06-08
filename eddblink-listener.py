@@ -366,11 +366,11 @@ def load_config():
                             ('export_path', './data/eddb'),                                          \
                             ('whitelist',                                                            \
                                 [                                                                    \
-                                    OrderedDict([ ('software', 'E:D Market Connector [Windows]')] ), \
-                                    OrderedDict([ ('software', 'E:D Market Connector [Mac OS]')]  ), \
-                                    OrderedDict([ ('software', 'E:D Market Connector [Linux]')]   ), \
-                                    OrderedDict([ ('software', 'EDDiscovery')]                    ), \
-                                    OrderedDict([ ('software', 'eddi'), ('minversion', '2.2')]    )  \
+                                    OrderedDict([ ('software', 'E:D Market Connector [Windows]') ]), \
+                                    OrderedDict([ ('software', 'E:D Market Connector [Mac OS]')  ]), \
+                                    OrderedDict([ ('software', 'E:D Market Connector [Linux]')   ]), \
+                                    OrderedDict([ ('software', 'EDDiscovery')                    ]), \
+                                    OrderedDict([ ('software', 'eddi'), ('minversion', '2.2')    ])  \
                                 ]                                                                    \
                             )                                                                        \
                ])
