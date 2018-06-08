@@ -452,7 +452,7 @@ def process_messages():
     db = tdb.getDB()
 
     while go:
-        # We don't want the theads intefering with each other,
+        # We don't want the threads intefering with each other,
         # so pause this one if either the update checker or
         # listings exporter report that they're active.
         if update_busy or export_busy:
@@ -481,7 +481,6 @@ def process_messages():
         try:
             station_id = station_ids[system.upper() + "/" + station.upper()]
         except KeyError:
-            # [MarkAusten] Skip output if not verbose
             if config['verbose']:
                 print("ERROR: Not found in Stations: " + system + "/" + station)
             continue
@@ -495,7 +494,6 @@ def process_messages():
             try:
                 name = db_name[commodity['name'].lower()]
             except KeyError:
-                # [MarkAusten] Skip output if not verbose
                 if config['verbose']:
                     print("Ignoring rare item: " + commodity['name'])
                 continue
@@ -504,7 +502,6 @@ def process_messages():
             try:
                 item_id = item_ids[name]
             except KeyError:
-                # [MarkAusten] skip output if not verbose
                 if config['verbose']:
                     print("EDDB.io does not include likely salvage item: '" + name + "'")
                 continue
@@ -549,7 +546,6 @@ def process_messages():
                 continue
             success = True
 
-            # [MarkAusten] output appripriate message
             if config['verbose']:
                 print("Market update for " + system + "/" + station\
                   + " finished in " + str(datetime.datetime.now() - start_update) + " seconds.")
@@ -651,7 +647,10 @@ def export_listings():
 go = True
 q = deque()
 config = load_config()
+validate_config()
 
+# First, check to make sure that EDDBlink plugin has made the changes
+# that need to be made for this thing to work correctly.
 tdb = tradedb.TradeDB(load=False)
 with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
     tmpFile = fh.read()
