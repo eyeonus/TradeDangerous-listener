@@ -1,3 +1,5 @@
+#!/usr/bin/env python3.6
+
 from __future__ import generators
 import json
 import time
@@ -295,7 +297,7 @@ def check_update():
         dumpModded = 0
         localModded = 0
         
-        # We want to get the files from Tromador's mirror, but it's down we'll go to EDDB.io directly, instead.         
+        # We want to get the files from Tromador's mirror, but if it's down we'll go to EDDB.io directly, instead.         
         if config['side'] == 'client':
             try:
                 urllib.request.urlopen(BASE_URL + COMMODITIES)
