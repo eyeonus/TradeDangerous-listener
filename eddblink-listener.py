@@ -407,6 +407,46 @@ def load_config():
     # missing settings set to default values.
     return config
 
+def validate_config():
+    global config
+    valid = True
+    with open("eddblink-listener-config.json", "r") as fh:
+        config_file = fh.read()
+        
+    config['side'] = config['side'].lower()
+    if config['side'] != 'server' and config['side'] != 'client':
+        valid = False
+        config_file = config_file.replace('"side"','"side_invalid"')
+        
+    if not isinstance(config["verbose"], bool):
+        valid = False
+        config_file = config_file.replace('"verbose"','"verbose_invalid"')
+        
+    if isinstance(config['check_delay_in_sec'], int):
+        if config['check_delay_in_sec'] < 1:
+            valid = False
+            config_file = config_file.replace('"check_delay_in_sec"','"check_delay_in_sec_invalid"')
+    else:
+        valid = False
+        config_file = config_file.replace('"check_delay_in_sec"','"check_delay_in_sec_invalid"')
+        
+    if isinstance(config['export_every_x_sec'], int):
+        if config['export_every_x_sec'] < 1:
+            valid = False
+            config_file = config_file.replace('"export_every_x_sec"','"export_every_x_sec_invalid"')
+    else:
+        valid = False
+        config_file = config_file.replace('"export_every_x_sec"','"export_every_x_sec_invalid"')
+        
+    if not Path.exists(Path(config['export_path'])):
+        valid = False
+        config_file = config_file.replace('"export_path"','"export_path_invalid"')
+        
+    if not valid:
+        with open("eddblink-listener-config.json", "w") as fh:
+            fh.write(config_file)
+        config = load_config()
+
 def process_messages():
     global process_ack
     tdb = tradedb.TradeDB(load=False)
@@ -503,7 +543,7 @@ def process_messages():
                 time.sleep(1)
                 continue
             success = True
-        print("(In queue: " + str(len(q)) + ") Market update for " + system + "/" + station\
+        print("Market update for " + system + "/" + station\
                + " finished in " + str(datetime.datetime.now() - start_update) + " seconds.")
         
     print("Shutting down message processor.")
