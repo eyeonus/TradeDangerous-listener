@@ -360,6 +360,7 @@ def load_config():
     # NOTE: Whitespace added for readability.
     config = OrderedDict([\
                             ('side', 'client'),                                                      \
+                            ('verbose', True),                                                       \
                             ('check_delay_in_sec', 3600),                                            \
                             ('export_every_x_sec', 300),                                             \
                             ('export_path', './data/eddb'),                                          \
