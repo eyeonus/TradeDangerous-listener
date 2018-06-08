@@ -377,17 +377,22 @@ def load_config():
     # Load the settings from the configuration file if it exists.
     if Path.exists(Path("eddblink-listener-config.json")):
         with open("eddblink-listener-config.json", "rU") as fh:
-            temp = json.load(fh, object_pairs_hook=OrderedDict)
-            # For each setting in config,
-            # if file setting exists and isn't the default,
-            # overwrite config setting with file setting.
-            for setting in config:
-                if setting in temp:
-                    if config[setting] != temp[setting]:
-                        config[setting] = temp[setting]
-                else:
-                    # If any settings don't exist in the config_file, need to update the file.
-                    write_config = True
+            try:
+                temp = json.load(fh, object_pairs_hook=OrderedDict)
+                # For each setting in config,
+                # if file setting exists and isn't the default,
+                # overwrite config setting with file setting.
+                for setting in config:
+                    if setting in temp:
+                        if config[setting] != temp[setting]:
+                            config[setting] = temp[setting]
+                    else:
+                        # If any settings don't exist in the config_file, need to update the file.
+                        write_config = True
+            except:
+                # If, for some reason, there's an error trying to load
+                # the config_file, treat it as if it doesn't exist.
+                write_config = True
     else:
         # If the config_file doesn't exist, need to make it.
         write_config = True
