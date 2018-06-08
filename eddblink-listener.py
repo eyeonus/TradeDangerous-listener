@@ -20,7 +20,6 @@ from collections import defaultdict, namedtuple, deque, OrderedDict
 from distutils.version import LooseVersion
 from macpath import curdir
 
-
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
 #
 # Conditional permission to copy, modify, refactor or use this
@@ -550,10 +549,10 @@ def process_messages():
 
             # [MarkAusten] output appripriate message
             if config['verbose']:
-            	print("Market update for " + system + "/" + station\
+                print("Market update for " + system + "/" + station\
                   + " finished in " + str(datetime.datetime.now() - start_update) + " seconds.")
             else:
-				print( "Updated " + system + "/" + station)
+                print( "Updated " + system + "/" + station)
 
     print("Shutting down message processor.")
 
