@@ -16,7 +16,7 @@ import codecs
 
 from calendar import timegm
 from pathlib import Path
-from collections import defaultdict, namedtuple, deque
+from collections import defaultdict, namedtuple, deque, OrderedDict
 from distutils.version import LooseVersion
 from macpath import curdir
 
@@ -347,31 +347,105 @@ def check_update():
                 time.sleep(1)
                 
 def load_config():
-    # Need to create the default configuration file if one does not exist yet.
-    if not Path.exists(Path("eddblink-listener-config.json")):
-        print("Writing default configuration.")
+    """
+    Loads the settings from 'eddblink-listener-configuration.json'. 
+    If the config_file does not exist or is missing any settings, 
+    the default will be used for any missing setting, 
+    and the config_file will be updated to include all settings,
+    preserving the existing (if any) settings' current values.
+    """
+    
+    write_config = False
+    # Initialize config with default settings.
+    # NOTE: Whitespace added for readability.
+    config = OrderedDict([\
+                            ('side', 'client'),                                                      \
+                            ('verbose', True),                                                       \
+                            ('check_delay_in_sec', 3600),                                            \
+                            ('export_every_x_sec', 300),                                             \
+                            ('export_path', './data/eddb'),                                          \
+                            ('whitelist',                                                            \
+                                [                                                                    \
+                                    OrderedDict([ ('software', 'E:D Market Connector [Windows]') ]), \
+                                    OrderedDict([ ('software', 'E:D Market Connector [Mac OS]')  ]), \
+                                    OrderedDict([ ('software', 'E:D Market Connector [Linux]')   ]), \
+                                    OrderedDict([ ('software', 'EDDiscovery')                    ]), \
+                                    OrderedDict([ ('software', 'eddi'), ('minversion', '2.2')    ])  \
+                                ]                                                                    \
+                            )                                                                        \
+               ])
+    
+    # Load the settings from the configuration file if it exists.
+    if Path.exists(Path("eddblink-listener-config.json")):
+        with open("eddblink-listener-config.json", "rU") as fh:
+            temp = json.load(fh, object_pairs_hook=OrderedDict)
+            # For each setting in config,
+            # if file setting exists and isn't the default,
+            # overwrite config setting with file setting.
+            for setting in config:
+                if setting in temp:
+                    if config[setting] != temp[setting]:
+                        config[setting] = temp[setting]
+                else:
+                    # If any settings don't exist in the config_file, need to update the file.
+                    write_config = True
+    else:
+        # If the config_file doesn't exist, need to make it.
+        write_config = True
+    
+        
+    # If the config_file doesn't exist, or if it is missing
+    # one or more settings (such as might happen in an upgrade),
+    # write the current configuration to the file.
+    if write_config:
         with open("eddblink-listener-config.json", "w") as config_file:
-            # [MarkAusten] Added the message_output property and value.
-            config_file.writelines(['{\n',
-                                    '    "side": "client",\n',
-                                    '    "check_delay_in_sec" : 3600,\n',
-                                    '    "export_every_x_sec" : 300,\n',
-                                    '    "export_path": "./data/eddb",\n'
-                                    '    "message_output": "verbose",\n'
-                                    '    "whitelist":\n',
-                                    '    [\n',
-                                    '        { "software":"E:D Market Connector [Windows]" },\n',
-                                    '        { "software":"E:D Market Connector [Mac OS]" },\n',
-                                    '        { "software":"E:D Market Connector [Linux]" },\n',
-                                    '        { "software":"EDDiscovery" },\n',
-                                    '        { "software":"eddi",\n',
-                                    '            "minversion":"2.2" }\n',
-                                    '    ]\n',
-                                    '}\n'])
-    # Load the configuration file into a usable json object. 
-    with open("eddblink-listener-config.json", "rU") as fh:
-        config = json.load(fh)
+            json.dump(config, config_file, indent = 4)
+            
+    # We now have a config that has valid values for all the settings,
+    # even if the setting was not found in the config_file, and the 
+    # config_file has been updated if necessary with all previously 
+    # missing settings set to default values.
     return config
+
+def validate_config():
+    global config
+    valid = True
+    with open("eddblink-listener-config.json", "r") as fh:
+        config_file = fh.read()
+        
+    config['side'] = config['side'].lower()
+    if config['side'] != 'server' and config['side'] != 'client':
+        valid = False
+        config_file = config_file.replace('"side"','"side_invalid"')
+        
+    if not isinstance(config["verbose"], bool):
+        valid = False
+        config_file = config_file.replace('"verbose"','"verbose_invalid"')
+        
+    if isinstance(config['check_delay_in_sec'], int):
+        if config['check_delay_in_sec'] < 1:
+            valid = False
+            config_file = config_file.replace('"check_delay_in_sec"','"check_delay_in_sec_invalid"')
+    else:
+        valid = False
+        config_file = config_file.replace('"check_delay_in_sec"','"check_delay_in_sec_invalid"')
+        
+    if isinstance(config['export_every_x_sec'], int):
+        if config['export_every_x_sec'] < 1:
+            valid = False
+            config_file = config_file.replace('"export_every_x_sec"','"export_every_x_sec_invalid"')
+    else:
+        valid = False
+        config_file = config_file.replace('"export_every_x_sec"','"export_every_x_sec_invalid"')
+        
+    if not Path.exists(Path(config['export_path'])):
+        valid = False
+        config_file = config_file.replace('"export_path"','"export_path_invalid"')
+        
+    if not valid:
+        with open("eddblink-listener-config.json", "w") as fh:
+            fh.write(config_file)
+        config = load_config()
 
 def process_messages():
     global process_ack
@@ -420,16 +494,18 @@ def process_messages():
             try:
                 name = db_name[commodity['name'].lower()]
             except KeyError:
-                # [MarkAusten] Changed from print() to the new log_to_console method
-                log_to_console("Ignoring rare item: " + commodity['name'], "")
+                # [MarkAusten] Skip output if not verbose
+                if config['verbose']:
+                    print("Ignoring rare item: " + commodity['name'])
                 continue
             # Some items, mostly salvage items, are found in db_name but not in item_ids
             # (This is entirely EDDB.io's fault.)
             try:
                 item_id = item_ids[name]
             except KeyError:
-                # [MarkAusten] Changed from print() to the new log_to_console method
-                log_to_console("EDDB.io does not include likely salvage item: '" + name + "'", "")
+                # [MarkAusten] skip output if not verbose
+                if config['verbose']:
+                    print("EDDB.io does not include likely salvage item: '" + name + "'")
                 continue
             
             demand_price = commodity['sellPrice']
@@ -472,11 +548,13 @@ def process_messages():
                 continue
             success = True
 
-            # [MarkAusten] Changed from print() to the new log_to_console method
-            log_to_console("(In queue: " + str(len(q)) + ") Market update for " + system + "/" + station\
-                  + " finished in " + str(datetime.datetime.now() - start_update) + " seconds.",\
-				  "Updated " + system + "/" + station)
-		
+            # [MarkAusten] output appripriate message
+            if config['verbose']:
+            	print("Market update for " + system + "/" + station\
+                  + " finished in " + str(datetime.datetime.now() - start_update) + " seconds.")
+            else:
+				print( "Updated " + system + "/" + station)
+
     print("Shutting down message processor.")
 
 def fetchIter(cursor, arraysize=1000):
@@ -569,26 +647,9 @@ def export_listings():
     else:
         export_ack = True
 
-
-def log_to_console(verbose_message, concise_message):
-    # [MarkAusten] If the verbose flag is set then print the verbose message
-    # [MarkAusten] otherwise print the concise message if provided
-    if verbose:
-        print(verbose_message)
-    else:
-        if concise_message:
-            print(concise_message)
-
 go = True
 q = deque()
 config = load_config()
-
-# [MarkAusten] Set the verbose flag from the config settings. If not found then verbose is assumed.
-# [MarkAusten] Note: This only checks for a 'verbose' setting, anything else is assumed to be 'concise'.
-if 'message_output' in config:
-    verbose = config['message_output'].lower() == 'verbose'
-else:
-    verbose = True
 
 tdb = tradedb.TradeDB(load=False)
 with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
@@ -670,4 +731,8 @@ try:
         time.sleep(1)
 except KeyboardInterrupt:
     print("CTRL-C detected, stopping.")
+    if config['side'] == 'server':
+        print("Please wait for all four processes to report they are finished, in case they are currently active.")
+    else:
+        print("Please wait for all three processes to report they are finished, in case they are currently active.")
     go = False

@@ -37,17 +37,27 @@ The configuration file, by default, looks like the following:
 ```
 {
     "side": "client",
-    "check_delay_in_sec" : 3600,
-    "export_every_x_sec" : 300,
+    "verbose": true,
+    "check_delay_in_sec": 3600,
+    "export_every_x_sec": 300,
     "export_path": "./data/eddb",
-    "whitelist":
-    [
-        { "software":"E:D Market Connector [Windows]" },
-        { "software":"E:D Market Connector [Mac OS]" },
-        { "software":"E:D Market Connector [Linux]" },
-        { "software":"EDDiscovery" },
-        { "software":"eddi",
-            "minversion":"2.2" }
+    "whitelist": [
+        {
+            "software": "E:D Market Connector [Windows]"
+        },
+        {
+            "software": "E:D Market Connector [Mac OS]"
+        },
+        {
+            "software": "E:D Market Connector [Linux]"
+        },
+        {
+            "software": "EDDiscovery"
+        },
+        {
+            "software": "eddi",
+            "minversion": "2.2"
+        }
     ]
 }
 ```
