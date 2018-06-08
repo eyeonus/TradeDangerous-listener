@@ -20,7 +20,6 @@ from collections import defaultdict, namedtuple, deque, OrderedDict
 from distutils.version import LooseVersion
 from macpath import curdir
 
-
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
 #
 # Conditional permission to copy, modify, refactor or use this
@@ -482,7 +481,9 @@ def process_messages():
         try:
             station_id = station_ids[system.upper() + "/" + station.upper()]
         except KeyError:
-            print("ERROR: Not found in Stations: " + system + "/" + station)
+            # [MarkAusten] Skip output if not verbose
+            if config['verbose']:
+                print("ERROR: Not found in Stations: " + system + "/" + station)
             continue
         
         modified = entry.timestamp.replace('T',' ').replace('Z','')
@@ -494,14 +495,18 @@ def process_messages():
             try:
                 name = db_name[commodity['name'].lower()]
             except KeyError:
-                print("Ignoring rare item: " + commodity['name'])
+                # [MarkAusten] Skip output if not verbose
+                if config['verbose']:
+                    print("Ignoring rare item: " + commodity['name'])
                 continue
             # Some items, mostly salvage items, are found in db_name but not in item_ids
             # (This is entirely EDDB.io's fault.)
             try:
                 item_id = item_ids[name]
             except KeyError:
-                print("EDDB.io does not include likely salvage item: '" + name + "'")
+                # [MarkAusten] skip output if not verbose
+                if config['verbose']:
+                    print("EDDB.io does not include likely salvage item: '" + name + "'")
                 continue
             
             demand_price = commodity['sellPrice']
@@ -543,9 +548,14 @@ def process_messages():
                 time.sleep(1)
                 continue
             success = True
-        print("Market update for " + system + "/" + station\
-               + " finished in " + str(datetime.datetime.now() - start_update) + " seconds.")
-        
+
+            # [MarkAusten] output appripriate message
+            if config['verbose']:
+                print("Market update for " + system + "/" + station\
+                  + " finished in " + str(datetime.datetime.now() - start_update) + " seconds.")
+            else:
+                print( "Updated " + system + "/" + station)
+
     print("Shutting down message processor.")
 
 def fetchIter(cursor, arraysize=1000):
@@ -638,13 +648,10 @@ def export_listings():
     else:
         export_ack = True
 
-
 go = True
 q = deque()
 config = load_config()
 
-# First, check to make sure that EDDBlink plugin has made the changes
-# that need to be made for this thing to work correctly.
 tdb = tradedb.TradeDB(load=False)
 with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
     tmpFile = fh.read()
