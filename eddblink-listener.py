@@ -16,7 +16,7 @@ import codecs
 
 from calendar import timegm
 from pathlib import Path
-from collections import defaultdict, namedtuple, deque
+from collections import defaultdict, namedtuple, deque, OrderedDict
 from distutils.version import LooseVersion
 from macpath import curdir
 
@@ -347,28 +347,63 @@ def check_update():
                 time.sleep(1)
                 
 def load_config():
-    # Need to create the default configuration file if one does not exist yet.
-    if not Path.exists(Path("eddblink-listener-config.json")):
-        print("Writing default configuration.")
+    """
+    Loads the settings from 'eddblink-listener-configuration.json'. 
+    If the config_file does not exist or is missing any settings, 
+    the default will be used for any missing setting, 
+    and the config_file will be updated to include all settings,
+    preserving the existing (if any) settings' current values.
+    """
+    
+    need_create = False
+    # Initialize config with default settings.
+    # NOTE: Whitespace added for readability.
+    config = OrderedDict([\
+                            ('side', 'client'),                                                      \
+                            ('check_delay_in_sec', 3600),                                            \
+                            ('export_every_x_sec', 300),                                             \
+                            ('export_path', './data/eddb'),                                          \
+                            ('whitelist',                                                            \
+                                [                                                                    \
+                                    OrderedDict([ ('software', 'E:D Market Connector [Windows]')] ), \
+                                    OrderedDict([ ('software', 'E:D Market Connector [Mac OS]')]  ), \
+                                    OrderedDict([ ('software', 'E:D Market Connector [Linux]')]   ), \
+                                    OrderedDict([ ('software', 'EDDiscovery')]                    ), \
+                                    OrderedDict([ ('software', 'eddi'), ('minversion', '2.2')]    )  \
+                                ]                                                                    \
+                            )                                                                        \
+               ])
+    
+    # Load the settings from the configuration file if it exists.
+    if Path.exists(Path("eddblink-listener-config.json")):
+        with open("eddblink-listener-config.json", "rU") as fh:
+            temp = json.load(fh, object_pairs_hook=OrderedDict)
+            # For each setting in config,
+            # if file setting exists and isn't the default,
+            # overwrite config setting with file setting.
+            for setting in config:
+                if setting in temp:
+                    if config[setting] != temp[setting]:
+                        config[setting] = temp[setting]
+                else:
+                    # If any settings don't exist in the config_file, need to update the file.
+                    write_config = True
+    else:
+        # If the config_file doesn't exist, need to make it.
+        write_config = True
+    
+        
+    # If the config_file doesn't exist, or if it is missing
+    # one or more settings (such as might happen in an upgrade),
+    # write the current configuration to the file.
+    if write_config:
         with open("eddblink-listener-config.json", "w") as config_file:
-            config_file.writelines(['{\n',
-                                    '    "side": "client",\n',
-                                    '    "check_delay_in_sec" : 3600,\n',
-                                    '    "export_every_x_sec" : 300,\n',
-                                    '    "export_path": "./data/eddb",\n'
-                                    '    "whitelist":\n',
-                                    '    [\n',
-                                    '        { "software":"E:D Market Connector [Windows]" },\n',
-                                    '        { "software":"E:D Market Connector [Mac OS]" },\n',
-                                    '        { "software":"E:D Market Connector [Linux]" },\n',
-                                    '        { "software":"EDDiscovery" },\n',
-                                    '        { "software":"eddi",\n',
-                                    '            "minversion":"2.2" }\n',
-                                    '    ]\n',
-                                    '}\n'])
-    # Load the configuration file into a usable json object. 
-    with open("eddblink-listener-config.json", "rU") as fh:
-        config = json.load(fh)
+            json.dump(config, config_file, indent = 4)
+            
+    # We now have a config that has valid values for all the settings,
+    # even if the setting was not found in the config_file, and the 
+    # config_file has been updated if necessary with all previously 
+    # missing settings set to default values.
     return config
 
 def process_messages():
