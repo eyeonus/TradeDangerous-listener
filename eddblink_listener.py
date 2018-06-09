@@ -286,10 +286,10 @@ def check_update():
             next_check += "s"
             
     # The following values only need to be assigned once, no need to be in the while loop.
-    commodities_path = Path('commodities.json')
-    BASE_URL = "http://elite.ripz.org/files/"
-    FALLBACK_URL = "https://eddb.io/archive/v5/"
+    BASE_URL = plugins.eddblink_plug.BASE_URL
+    FALLBACK_URL = plugins.eddblink_plug.FALLBACK_URL
     COMMODITIES = "commodities.json"
+    commodities_path = Path(COMMODITIES)
     Months = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6, 'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
        
     while go:
