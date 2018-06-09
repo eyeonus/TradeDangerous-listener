@@ -625,14 +625,15 @@ def export_listings():
         print("Listings will be exported to: \n\t" + str(listings_file))
 
         while go:
-            
+            print("We have go.")
             now = time.time()
-            
+            print("now = " + str(now) + ": waiting until " + str(now + config['export_every_x_sec']) + " before doing next export.")
             # Wait until the time specified in the "export_every_x_sec" config
             # before doing an export, watch for busy signal or shutdown signal
             # while waiting. 
             while time.time() < now + config['export_every_x_sec']:
                 if not go:
+                    print("Shut down signal while waiting.")
                     break
                 if update_busy:
                     print("Listings exporter acknowledging busy signal.")
@@ -642,6 +643,7 @@ def export_listings():
                     export_ack = False
                     # Just in case we caught the shutdown command while waiting.
                     if not go:
+                        print('Shut down signal while updater busy.')
                         break
                     print("Busy signal off, listings exporter resuming.")
                     now = time.time()
@@ -656,6 +658,7 @@ def export_listings():
             while not (process_ack):
                 pass
             try:
+                print("Grabbing listings for export.")
                 results = list(fetchIter(cur.execute("SELECT * FROM StationItem ORDER BY station_id, item_id")))
             except sqlite3.DatabaseError:
                 export_busy = False
