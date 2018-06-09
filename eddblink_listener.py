@@ -689,10 +689,11 @@ def export_listings():
                              + sell_price + "," + demand + "," + demand_bracket + ","\
                              + collected_at + "\n")
                     lineNo += 1
-            if listings_file.exists():
-                listings_file.unlink()
-            listings_tmp.rename(listings_file)
-            print("Export completed in " + str(datetime.datetime.now() - start))
+            if go:
+                if listings_file.exists():
+                    listings_file.unlink()
+                listings_tmp.rename(listings_file)
+                print("Export completed in " + str(datetime.datetime.now() - start))
 
         print("Shutting down listings exporter.")
 
