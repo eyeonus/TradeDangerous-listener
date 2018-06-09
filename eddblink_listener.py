@@ -673,6 +673,8 @@ def export_listings():
                 f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
                 lineNo = 1
                 for result in results:
+                    if not go:
+                        break
                     station_id = str(result[0])
                     commodity_id = str(result[1])
                     sell_price = str(result[2])
