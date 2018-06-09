@@ -621,7 +621,7 @@ def export_listings():
         tdb = tradedb.TradeDB(load=False)
         cur = tdb.getDB().cursor()
         listings_file = (Path(config['export_path']) / Path("listings.csv")).resolve()
-        listing_tmp = listings_file.with_suffix(".tmp")
+        listings_tmp = listings_file.with_suffix(".tmp")
         print("Listings will be exported to: \n\t" + str(listings_file))
 
         while go:
