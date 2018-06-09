@@ -620,6 +620,7 @@ def export_listings():
         tdb = tradedb.TradeDB(load=False)
         cur = tdb.getDB().cursor()
         listings_file = (Path(config['export_path']) / Path("listings.csv")).resolve()
+        listing_tmp = listings_file.with_suffix(".tmp")
         print("Listings will be exported to: \n\t" + str(listings_file))
 
         while go:
@@ -661,7 +662,7 @@ def export_listings():
             export_busy = False
             
             print("Exporting 'listings.csv'. (Got listings in " + str(datetime.datetime.now() - start) + ")")
-            with open(str(listings_file), "w") as f:
+            with open(str(listings_tmp), "w") as f:
                 f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
                 lineNo = 1
                 for result in results:
@@ -679,6 +680,9 @@ def export_listings():
                              + sell_price + "," + demand + "," + demand_bracket + ","\
                              + collected_at + "\n")
                     lineNo += 1
+            if listings_file.exists():
+                listings_file.unlink()
+            listings_tmp.rename(listings_file)
             print("Export completed in " + str(datetime.datetime.now() - start))
 
         print("Shutting down listings exporter.")
