@@ -694,6 +694,8 @@ def export_listings():
                     listings_file.unlink()
                 listings_tmp.rename(listings_file)
                 print("Export completed in " + str(datetime.datetime.now() - start))
+            else:
+                print("Export aborted, received shutdown signal.")
 
         print("Shutting down listings exporter.")
 
