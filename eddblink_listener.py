@@ -15,6 +15,7 @@ import datetime
 import sqlite3
 import csv
 import codecs
+import plugins.eddblink_plug
 
 from calendar import timegm
 from pathlib import Path
@@ -285,7 +286,7 @@ def check_update():
             next_check += "s"
             
     # The following values only need to be assigned once, no need to be in the while loop.
-    commodities_path = Path('eddb') / Path('commodities.json')
+    commodities_path = Path('commodities.json')
     BASE_URL = "http://elite.ripz.org/files/"
     FALLBACK_URL = "https://eddb.io/archive/v5/"
     COMMODITIES = "commodities.json"
@@ -319,8 +320,8 @@ def check_update():
         dumpModded = timegm(dumpDT.timetuple())
 
         # Now that we have the Unix epoch time of the dump file, get the same from the local file.
-        if Path.exists(dataPath / commodities_path):
-            localModded = (dataPath / commodities_path).stat().st_mtime
+        if Path.exists(eddbPath / commodities_path):
+            localModded = (eddbPath / commodities_path).stat().st_mtime
             
         # Trigger daily EDDB update if the dumps have updated since last run.
         # Otherwise, go to sleep for an hour before checking again.
@@ -734,6 +735,7 @@ db_name['trinketsoffortune'] = 'Trinkets Of Hidden Fortune'
 db_name['wreckagecomponents'] = 'Salvageable Wreckage'
 
 dataPath = Path(tradeenv.TradeEnv().dataDir).resolve()
+eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
 
 # We'll use this to get the item_id from the item's name because it's faster than a database lookup.
 item_ids = dict()
