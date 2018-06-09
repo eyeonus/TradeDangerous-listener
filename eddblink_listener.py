@@ -697,8 +697,11 @@ def export_listings():
                 print("Export aborted, received shutdown signal.")
                 break
             
-            if listings_file.exists():
-                listings_file.unlink()
+            while listings_file.exists():
+                try:
+                    listings_file.unlink()
+                except:
+                    time.sleep(1)
             listings_tmp.rename(listings_file)
             print("Export completed in " + str(datetime.datetime.now() - start))
 
