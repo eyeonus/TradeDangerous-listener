@@ -625,15 +625,12 @@ def export_listings():
         print("Listings will be exported to: \n\t" + str(listings_file))
 
         while go:
-            print("We have go.")
             now = time.time()
-            print("now = " + str(now) + ": waiting until " + str(now + config['export_every_x_sec']) + " before doing next export.")
             # Wait until the time specified in the "export_every_x_sec" config
             # before doing an export, watch for busy signal or shutdown signal
             # while waiting. 
             while time.time() < now + config['export_every_x_sec']:
                 if not go:
-                    print("Shut down signal while waiting.")
                     break
                 if update_busy:
                     print("Listings exporter acknowledging busy signal.")
@@ -643,11 +640,12 @@ def export_listings():
                     export_ack = False
                     # Just in case we caught the shutdown command while waiting.
                     if not go:
-                        print('Shut down signal while updater busy.')
                         break
                     print("Busy signal off, listings exporter resuming.")
                     now = time.time()
-                    
+            
+            # We may be here because we broke out of the waiting loop,
+            # so we need to see if we lost go and quit the main loop if so. 
             if not go:
                 break
 
@@ -661,7 +659,6 @@ def export_listings():
             while not (process_ack):
                 pass
             try:
-                print("Grabbing listings for export.")
                 results = list(fetchIter(cur.execute("SELECT * FROM StationItem ORDER BY station_id, item_id")))
             except sqlite3.DatabaseError:
                 export_busy = False
@@ -673,6 +670,7 @@ def export_listings():
                 f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
                 lineNo = 1
                 for result in results:
+                    # If we lose go during export, we need to abort.
                     if not go:
                         break
                     station_id = str(result[0])
@@ -689,13 +687,17 @@ def export_listings():
                              + sell_price + "," + demand + "," + demand_bracket + ","\
                              + collected_at + "\n")
                     lineNo += 1
-            if go:
-                if listings_file.exists():
-                    listings_file.unlink()
-                listings_tmp.rename(listings_file)
-                print("Export completed in " + str(datetime.datetime.now() - start))
-            else:
+            
+            # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it. 
+            if not go:
+                listings_tmp.unlink()
                 print("Export aborted, received shutdown signal.")
+                break
+            
+            if listings_file.exists():
+                listings_file.unlink()
+            listings_tmp.rename(listings_file)
+            print("Export completed in " + str(datetime.datetime.now() - start))
 
         print("Shutting down listings exporter.")
 
