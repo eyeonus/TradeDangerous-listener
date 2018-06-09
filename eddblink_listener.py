@@ -263,9 +263,9 @@ def get_messages():
 def check_update():
     global update_busy
     
-    # Convert the number from the "check_delay_in_sec" setting, which is in seconds,
+    # Convert the number from the "check_update_every_x_sec" setting, which is in seconds,
     # into easily readable hours, minutes, seconds.
-    m, s = divmod(config['check_delay_in_sec'], 60)
+    m, s = divmod(config['check_update_every_x_sec'], 60)
     h, m = divmod(m, 60)
     next_check = ""
     if h > 0:
@@ -342,7 +342,7 @@ def check_update():
             update_busy = False
         else:
             print("No update, checking again in "+ next_check + ".")
-            while time.time() < now + config['check_delay_in_sec']:
+            while time.time() < now + config['check_update_every_x_sec']:
                 if not go:
                     print("Shutting down update checker.")
                     break
@@ -364,7 +364,7 @@ def load_config():
                             ('side', 'client'),                                                      \
                             ('verbose', True),                                                       \
                             ('plugin_options', "all,skipvend,force"),                                                       \
-                            ('check_delay_in_sec', 3600),                                            \
+                            ('check_update_every_x_sec', 3600),                                            \
                             ('export_every_x_sec', 300),                                             \
                             ('export_path', './data/eddb'),                                          \
                             ('whitelist',                                                            \
@@ -393,6 +393,9 @@ def load_config():
                     else:
                         # If any settings don't exist in the config_file, need to update the file.
                         write_config = True
+                if temp.get("check_delay_in_sec"):
+                    config["check_update_every_x_sec"] = temp["check_delay_in_sec"]
+                    write_config = True
             except:
                 # If, for some reason, there's an error trying to load
                 # the config_file, treat it as if it doesn't exist.
@@ -462,13 +465,13 @@ def validate_config():
         valid = False
         config_file = config_file.replace('"plugin_options"','"plugin_options_invalid"')
         
-    if isinstance(config['check_delay_in_sec'], int):
-        if config['check_delay_in_sec'] < 1:
+    if isinstance(config['check_update_every_x_sec'], int):
+        if config['check_update_every_x_sec'] < 1:
             valid = False
-            config_file = config_file.replace('"check_delay_in_sec"','"check_delay_in_sec_invalid"')
+            config_file = config_file.replace('"check_update_every_x_sec"','"check_update_every_x_sec_invalid"')
     else:
         valid = False
-        config_file = config_file.replace('"check_delay_in_sec"','"check_delay_in_sec_invalid"')
+        config_file = config_file.replace('"check_update_every_x_sec"','"check_update_every_x_sec_invalid"')
         
     if isinstance(config['export_every_x_sec'], int):
         if config['export_every_x_sec'] < 1:
