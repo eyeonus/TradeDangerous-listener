@@ -592,11 +592,11 @@ def process_messages():
                 continue
             success = True
 
-            if config['verbose']:
-                print("Market update for " + system + "/" + station\
+        if config['verbose']:
+            print("Market update for " + system + "/" + station\
                   + " finished in " + str(datetime.datetime.now() - start_update) + " seconds.")
-            else:
-                print( "Updated " + system + "/" + station)
+        else:
+            print( "Updated " + system + "/" + station)
 
     print("Shutting down message processor.")
 
