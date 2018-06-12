@@ -18,7 +18,7 @@ An EDDN listener, designed to work in conjunction with the EDDBlink plugin ( htt
 - If configured as server, will automatically export the currently stored prices listings from TD's database in the file "listings.csv", which will be located in the folder named in the "export_path" setting, which defaults to "<TD install>\data\eddb". The duration between subsequent exports is 5 minutes by default, and can be configured in the configuration file, under the setting "export_every_x_sec".
 
 # Running
-Running the program is simple: open a Command Prompt (Windows) / Terminal (Linux/OSX), go to the folder this program is located at, and type 'python eddblink-listener.py". You'll know you did it right when you see "Press CTRL-C at any time to quit gracefully." Once you see that, you can simply minimize the window and let it do its thing.
+Running the program is simple: open a Command Prompt (Windows) / Terminal (Linux/OSX), go to the folder this program is located at, and type 'python eddblink_listener.py". You'll know you did it right when you see "Press CTRL-C at any time to quit gracefully." Once you see that, you can simply minimize the window and let it do its thing.
 
 To close the program in a way that will definitely not muck up the database, press CTRL-C. This will send a "keyboard interrupt", also known as SIGINT, to the program, letting it know you want it to stop, and it will shut down all its processes cleanly.
 (If you're on a Mac and CTRL-C doesn't work, try '⌘-.' (Command-period).)
