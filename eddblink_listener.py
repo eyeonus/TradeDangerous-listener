@@ -758,7 +758,10 @@ if firstRun:
 
 if tmpFile.find("from_live INTEGER DEFAULT 0 NOT NULL,") == -1:
     print("Database not updated by EDDBlink v0.26+, running now.")
-    trade.main(('trade.py','import','-P','eddblink','-O','ship'))
+    trade.main(('trade.py','import','-P','eddblink'))
+    # Check to see if plugin updated database.
+    with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
+        tmpFile = fh.read()
     if tmpFile.find("from_live INTEGER DEFAULT 0 NOT NULL,") == -1:
         sys.exit("EDDBlink plugin not at least v0.26, must update for listener to work correctly.")
 
