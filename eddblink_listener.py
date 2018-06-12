@@ -16,6 +16,7 @@ import sqlite3
 import csv
 import codecs
 import plugins.eddblink_plug
+import sys
 
 from calendar import timegm
 from pathlib import Path
@@ -756,7 +757,10 @@ if firstRun:
     print("Finished running EDDBlink plugin, no need to run again.")
 
 if tmpFile.find("from_live INTEGER DEFAULT 0 NOT NULL,") == -1:
-    sys.exit("EDDBlink plugin not at least v0.26, must update for listener to work correctly.")
+    print("Database not updated by EDDBlink v0.26+, running now.")
+    trade.main(('trade.py','import','-P','eddblink','-O','ship'))
+    if tmpFile.find("from_live INTEGER DEFAULT 0 NOT NULL,") == -1:
+        sys.exit("EDDBlink plugin not at least v0.26, must update for listener to work correctly.")
 
 update_busy = False
 process_ack = False
