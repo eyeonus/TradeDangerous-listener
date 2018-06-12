@@ -636,7 +636,7 @@ def fetchIter(cursor, arraysize=1000):
             
 def export_listings():
     """
-    Creates a "listings.csv" file in "export_path" every X seconds,
+    Creates a "listings-live.csv" file in "export_path" every X seconds,
     as defined in the configuration file.
     Only runs when program configured as server.
     """
@@ -645,7 +645,7 @@ def export_listings():
     if config['side'] == 'server':
         tdb = tradedb.TradeDB(load=False)
         db = tdb.getDB()
-        listings_file = (Path(config['export_path']).resolve() / Path("listings.csv"))
+        listings_file = (Path(config['export_path']).resolve() / Path("listings-live.csv"))
         listings_tmp = listings_file.with_suffix(".tmp")
         print("Listings will be exported to: \n\t" + str(listings_file))
 
@@ -693,7 +693,7 @@ def export_listings():
                 continue
             export_busy = False
             
-            print("Exporting 'listings.csv'. (Got listings in " + str(datetime.datetime.now() - start) + ")")
+            print("Exporting 'listings-live.csv'. (Got listings in " + str(datetime.datetime.now() - start) + ")")
             with open(str(listings_tmp), "w") as f:
                 f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
                 lineNo = 1
