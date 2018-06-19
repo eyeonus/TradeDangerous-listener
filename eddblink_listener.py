@@ -716,7 +716,7 @@ def export_listings():
                              + collected_at
                     f.write(str(lineNo) + "," + listing + "\n")
                     lineNo += 1
-            
+            del results
             # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it. 
             if not go:
                 listings_tmp.unlink()
