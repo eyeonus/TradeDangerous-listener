@@ -381,8 +381,8 @@ def load_config():
     config = OrderedDict([\
                             ('side', 'client'),                                                      \
                             ('verbose', True),                                                       \
-                            ('plugin_options', "all,skipvend,force"),                                                       \
-                            ('check_update_every_x_sec', 3600),                                            \
+                            ('plugin_options', "all,skipvend,force"),                                \
+                            ('check_update_every_x_sec', 3600),                                      \
                             ('export_every_x_sec', 300),                                             \
                             ('export_path', './data/eddb'),                                          \
                             ('whitelist',                                                            \
