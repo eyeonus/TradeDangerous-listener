@@ -514,6 +514,13 @@ def process_messages():
     global process_ack
     tdb = tradedb.TradeDB(load=False)
     
+    blank_entry = {'demand_price':0,
+                   'demand_units':0,
+                   'demand_level':0,
+                   'supply_price':0,
+                   'supply_units':0,
+                   'supply_level':0,
+                  }
     while go:
         # We don't want the threads interfering with each other,
         # so pause this one if either the update checker or
@@ -526,6 +533,16 @@ def process_messages():
             process_ack = False
             # Just in case we caught the shutdown command while waiting.
             if not go:
+                #Make sure any changes are committed before shutting down.
+                success = False
+                while not success:
+                    try:
+                        db.commit()
+                        success = True
+                    except sqlite3.OperationalError:
+                        print("Database is locked, waiting for access.", end = "\r")
+                        time.sleep(1)
+                    db.close()
                 break
             print("Busy signal off, message processor resuming.")
 
@@ -553,6 +570,7 @@ def process_messages():
         
         db = tdb.getDB()
         start_update = datetime.datetime.now()
+        items = dict()
         for commodity in commodities:
             # Get item_id using commodity name from message.
             try:
@@ -570,36 +588,56 @@ def process_messages():
                     print("EDDB.io does not include likely salvage item: '" + name + "'")
                 continue
             
-            demand_price = commodity['sellPrice']
-            demand_units = commodity['demand']
-            demand_level = commodity['demandBracket'] if commodity['demandBracket'] != '' else -1
-            supply_price = commodity['buyPrice']
-            supply_units = commodity['stock']
-            supply_level = commodity['stockBracket'] if commodity['stockBracket'] != '' else -1
-            try:
-                db_execute(db, """INSERT INTO StationItem
+            items[name] = {'item_id':item_id, 
+                           'demand_price':commodity['sellPrice'],
+                           'demand_units':commodity['demand'],
+                           'demand_level':commodity['demandBracket'] if commodity['demandBracket'] != '' else -1,
+                           'supply_price':commodity['buyPrice'],
+                           'supply_units':commodity['stock'],
+                           'supply_level':commodity['stockBracket'] if commodity['stockBracket'] != '' else -1,
+                          }
+        
+        for key in item_ids:
+            if key in items:
+                entry = items[key]
+                try:
+                    db_execute(db, """INSERT INTO StationItem
                             (station_id, item_id, modified,
                              demand_price, demand_units, demand_level,
                              supply_price, supply_units, supply_level, from_live)
                             VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, 1 )""",
-                            (station_id, item_id, modified,
-                            demand_price, demand_units, demand_level,
-                            supply_price, supply_units, supply_level))
-            except sqlite3.IntegrityError:
-                try:
-                    db_execute(db, """UPDATE StationItem
+                            (station_id, entry['item_id'], modified,
+                            entry['demand_price'], entry['demand_units'], entry['demand_level'],
+                            entry['supply_price'], entry['supply_units'], entry['supply_level']))
+                except sqlite3.IntegrityError:
+                    try:
+                        db_execute(db, """UPDATE StationItem
                                 SET modified = ?,
                                  demand_price = ?, demand_units = ?, demand_level = ?,
                                  supply_price = ?, supply_units = ?, supply_level = ?,
                                  from_live = 1
                                 WHERE station_id = ? AND item_id = ?""",
                                 (modified, 
-                                 demand_price, demand_units, demand_level, 
-                                 supply_price, supply_units, supply_level,
-                                 station_id, item_id))
+                                 entry['demand_price'], entry['demand_units'], entry['demand_level'], 
+                                 entry['supply_price'], entry['supply_units'], entry['supply_level'],
+                                 station_id, entry['item_id']))
+                    except sqlite3.IntegrityError:
+                        if config['verbose']:
+                            print("Unable to insert or update: " + commodity)
+                del entry
+            else:
+                # Don't need to insert blank entries, just need to update 
+                # formerly not blank entries so they'll get deleted.
+                try:
+                    db_execute(db, """UPDATE StationItem
+                                SET modified = ?,
+                                 demand_price = 0, demand_units = 0, demand_level = 0,
+                                 supply_price = 0, supply_units = 0, supply_level = 0,
+                                 from_live = 1
+                                WHERE station_id = ? AND item_id = ?""",
+                                (modified, station_id, item_ids[key]))
                 except sqlite3.IntegrityError:
-                    print("Unable to insert or update: " + commodity)
-                    success = True
+                    pass
         
         # Don't try to commit if there are still messages waiting.
         if len(q) == 0:
