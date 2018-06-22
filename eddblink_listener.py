@@ -10,7 +10,6 @@ import trade
 import tradedb
 import tradeenv
 import transfers
-import urllib
 import datetime
 import sqlite3
 import csv
@@ -18,6 +17,7 @@ import codecs
 import plugins.eddblink_plug
 import sys
 
+from urllib import request
 from calendar import timegm
 from pathlib import Path
 from collections import defaultdict, namedtuple, deque, OrderedDict
@@ -279,7 +279,7 @@ def get_messages():
     listener.get_batch(q)
 
 def check_update():
-    global update_busy
+    global update_busy, db_name, item_ids, system_names, station_ids
     
     # Convert the number from the "check_update_every_x_sec" setting, which is in seconds,
     # into easily readable hours, minutes, seconds.
@@ -319,7 +319,7 @@ def check_update():
         # We want to get the files from Tromador's mirror, but if it's down we'll go to EDDB.io directly, instead.         
         if config['side'] == 'client':
             try:
-                urllib.request.urlopen(BASE_URL + LISTINGS)
+                request.urlopen(BASE_URL + LISTINGS)
                 url = BASE_URL + LISTINGS
             except:
                 url = FALLBACK_URL + LISTINGS
@@ -329,7 +329,7 @@ def check_update():
         # Need to parse the "Last-Modified" header into a Unix-epoch, and Python's strptime()
         # won't work because it is locale-dependent, meaning it would only work in English-
         # speaking countries.
-        dDL = urllib.request.urlopen(url).getheader("Last-Modified").split(' ')
+        dDL = request.urlopen(url).getheader("Last-Modified").split(' ')
         dTL = dDL[4].split(':')
 
         dumpDT = datetime.datetime(int(dDL[3]), Months[dDL[2]], int(dDL[1]),\
@@ -356,6 +356,11 @@ def check_update():
             if config['side'] == "server":
                 options += ",fallback"
             trade.main(('trade.py','import','-P','eddblink','-O',options))
+            
+            # Since there's been an update, we need to redo all this.
+            del db_name, item_ids, system_names, station_ids
+            db_name, item_ids, system_names, station_ids = update_dicts()
+            
             print("Update complete, turning off busy signal.")
             update_busy = False
         else:
@@ -774,6 +779,48 @@ def export_listings():
     else:
         export_ack = True
 
+def update_dicts():
+    # We'll use this to convert the name of the items given in the EDDN messages into the names TD uses.
+    db_name = dict()
+    edmc_source = 'https://raw.githubusercontent.com/Marginal/EDMarketConnector/master/commodity.csv'
+    edmc_csv = request.urlopen(edmc_source)
+    edmc_dict = csv.DictReader(codecs.iterdecode(edmc_csv, 'utf-8'))
+    for line in iter(edmc_dict):
+        db_name[line['symbol'].lower()] = line['name']
+    #A few of these don't match between EDMC and EDDB, so we fix them individually.
+    db_name['airelics'] = 'Ai Relics'
+    db_name['drones'] = 'Limpet'
+    db_name['liquidoxygen'] = 'Liquid Oxygen'
+    db_name['methanolmonohydratecrystals'] = 'Methanol Monohydrate'
+    db_name['coolinghoses'] = 'Micro-Weave Cooling Hoses'
+    db_name['nonlethalweapons'] = 'Non-lethal Weapons'
+    db_name['sap8corecontainer'] = 'Sap 8 Core Container'
+    db_name['trinketsoffortune'] = 'Trinkets Of Hidden Fortune'
+    db_name['wreckagecomponents'] = 'Salvageable Wreckage'
+    
+    # We'll use this to get the item_id from the item's name because it's faster than a database lookup.
+    item_ids = dict()
+    with open(str(dataPath / Path("Item.csv")), "rU") as fh:
+        items = csv.DictReader(fh, quotechar="'")
+        for item in items:
+            item_ids[item['name']] =  int(item['unq:item_id'])
+    
+    # We're using these two for the same reason. 
+    system_names = dict()
+    with open(str(dataPath / Path("System.csv")), "rU") as fh:
+        systems = csv.DictReader(fh, quotechar="'")
+        for system in systems:
+            system_names[int(system['unq:system_id'])] = system['name'].upper()
+    
+    station_ids = dict()
+    with open(str(dataPath / Path("Station.csv")), "rU") as fh:
+        stations = csv.DictReader(fh, quotechar="'")
+        for station in stations:
+            full_name = system_names[int(station['system_id@System.system_id'])] + "/" + station['name'].upper()
+            station_ids[full_name] = int(station['unq:station_id'])
+    
+    return db_name, item_ids, system_names, station_ids
+
 go = True
 q = deque()
 config = load_config()
@@ -808,50 +855,10 @@ process_ack = False
 export_ack = False
 export_busy = False
 
-# We'll use this to convert the name of the items given in the EDDN messages into the names TD uses.
-db_name = dict()
-edmc_source = 'https://raw.githubusercontent.com/Marginal/EDMarketConnector/master/commodity.csv'
-edmc_csv = urllib.request.urlopen(edmc_source)
-edmc_dict = csv.DictReader(codecs.iterdecode(edmc_csv, 'utf-8'))
-for line in iter(edmc_dict):
-    db_name[line['symbol'].lower()] = line['name']
-#A few of these don't match between EDMC and EDDB, so we fix them individually.
-db_name['airelics'] = 'Ai Relics'
-db_name['drones'] = 'Limpet'
-db_name['liquidoxygen'] = 'Liquid Oxygen'
-db_name['methanolmonohydratecrystals'] = 'Methanol Monohydrate'
-db_name['coolinghoses'] = 'Micro-Weave Cooling Hoses'
-db_name['nonlethalweapons'] = 'Non-lethal Weapons'
-db_name['sap8corecontainer'] = 'Sap 8 Core Container'
-db_name['trinketsoffortune'] = 'Trinkets Of Hidden Fortune'
-db_name['wreckagecomponents'] = 'Salvageable Wreckage'
-
 dataPath = Path(tradeenv.TradeEnv().dataDir).resolve()
 eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
 
-# We'll use this to get the item_id from the item's name because it's faster than a database lookup.
-item_ids = dict()
-with open(str(dataPath / Path("Item.csv")), "rU") as fh:
-    items = csv.DictReader(fh, quotechar="'")
-    for item in items:
-        item_ids[item['name']] =  int(item['unq:item_id'])
-
-# We're using these two for the same reason. 
-system_names = dict()
-with open(str(dataPath / Path("System.csv")), "rU") as fh:
-    systems = csv.DictReader(fh, quotechar="'")
-    for system in systems:
-        system_names[int(system['unq:system_id'])] = system['name'].upper()
-
-station_ids = dict()
-with open(str(dataPath / Path("Station.csv")), "rU") as fh:
-    stations = csv.DictReader(fh, quotechar="'")
-    for station in stations:
-        full_name = system_names[int(station['system_id@System.system_id'])] + "/" + station['name'].upper()
-        station_ids[full_name] = int(station['unq:station_id'])
-
-# system_names has served its use and is no longer needed, so free up the memory it's taking.
-del system_names
+db_name, item_ids, system_names, station_ids = update_dicts()
 
 print("Press CTRL-C at any time to quit gracefully.")
 try:
