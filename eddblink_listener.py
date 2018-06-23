@@ -279,7 +279,7 @@ def get_messages():
     listener.get_batch(q)
 
 def check_update():
-    global update_busy, db_name, item_ids, system_names, station_ids
+    global update_busy, db_name, item_ids, system_ids, station_ids
     
     # Convert the number from the "check_update_every_x_sec" setting, which is in seconds,
     # into easily readable hours, minutes, seconds.
@@ -358,8 +358,8 @@ def check_update():
             trade.main(('trade.py','import','-P','eddblink','-O',options))
             
             # Since there's been an update, we need to redo all this.
-            del db_name, item_ids, system_names, station_ids
-            db_name, item_ids, system_names, station_ids = update_dicts()
+            del db_name, item_ids, system_ids, station_ids
+            db_name, item_ids, system_ids, station_ids = update_dicts()
             
             print("Update complete, turning off busy signal.")
             update_busy = False
@@ -519,14 +519,9 @@ def process_messages():
     global process_ack
     tdb = tradedb.TradeDB(load=False)
     
-    blank_entry = {'demand_price':0,
-                   'demand_units':0,
-                   'demand_level':0,
-                   'supply_price':0,
-                   'supply_units':0,
-                   'supply_level':0,
-                  }
     while go:
+        db = tdb.getDB()
+        
         # We don't want the threads interfering with each other,
         # so pause this one if either the update checker or
         # listings exporter report that they're active.
@@ -560,20 +555,33 @@ def process_messages():
             continue
         
         # Get the station_is using the system and station names.
-        system = entry.system
-        station = entry.station
+        system = entry.system.upper()
+        station = entry.station.upper()
         
         try:
-            station_id = station_ids[system.upper() + "/" + station.upper()]
+            station_id = station_ids[system + "/" + station]
         except KeyError:
-            if config['verbose']:
-                print("ERROR: Not found in Stations: " + system + "/" + station)
-            continue
+            try:
+                # Mobile stations are stored in the dict a bit differently.
+                station_id = station_ids["MEGASHIP/" + station]
+                system_id = system_ids[system]
+                print("Megaship station, updating system.", end=" ")
+                # Update the system the station is in, in case it has changed.
+                try:
+                    db_execute(db, """UPDATE Station
+                               SET system_id = ?
+                               WHERE station_id = ?""",
+                            (system_id, station_id))
+                except Exception as e:
+                    print(e)
+            except KeyError as e:
+                if config['verbose']:
+                    print("ERROR: Not found in Stations: " + system + "/" + station)
+                    continue
         
         modified = entry.timestamp.replace('T',' ').replace('Z','')
         commodities= entry.commodities
         
-        db = tdb.getDB()
         start_update = datetime.datetime.now()
         items = dict()
         for commodity in commodities:
@@ -805,26 +813,47 @@ def update_dicts():
         for item in items:
             item_ids[item['name']] =  int(item['unq:item_id'])
     
-    # We're using these two for the same reason. 
+    # We're using these for the same reason. 
     system_names = dict()
+    system_ids = dict()
     with open(str(dataPath / Path("System.csv")), "rU") as fh:
         systems = csv.DictReader(fh, quotechar="'")
         for system in systems:
             system_names[int(system['unq:system_id'])] = system['name'].upper()
-    
+            system_ids[system['name'].upper()] = int(system['unq:system_id'])
     station_ids = dict()
     with open(str(dataPath / Path("Station.csv")), "rU") as fh:
         stations = csv.DictReader(fh, quotechar="'")
         for station in stations:
-            full_name = system_names[int(station['system_id@System.system_id'])] + "/" + station['name'].upper()
+            # Mobile stations can move between systems. The mobile stations 
+            # have the following data in their entry in stations.jsonl:
+            # "type_id":19,"type":"Megaship"
+            # Except for that one Orbis station.
+            if int(station['type_id']) == 19 or int(station['unq:station_id']) == 42041:
+                full_name = "MEGASHIP"
+            else:
+                full_name = system_names[int(station['system_id@System.system_id'])]
+            full_name += "/" + station['name'].upper()
             station_ids[full_name] = int(station['unq:station_id'])
     
-    return db_name, item_ids, system_names, station_ids
+    del system_names
+    
+    return db_name, item_ids, system_ids, station_ids
 
 go = True
 q = deque()
 config = load_config()
 validate_config()
+
+listener_thread = threading.Thread(target=get_messages)
+update_thread = threading.Thread(target=check_update)
+process_thread = threading.Thread(target=process_messages)
+export_thread = threading.Thread(target=export_listings)
+
+# The sooner the listener thread is started, the sooner
+# the messages start pouring in.
+print("Starting listener.")
+listener_thread.start()
 
 # First, check to make sure that EDDBlink plugin has made the changes
 # that need to be made for this thing to work correctly.
@@ -834,21 +863,24 @@ with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
 
 firstRun = (tmpFile.find('system_id INTEGER PRIMARY KEY AUTOINCREMENT') != -1)
 
-# EDDBlink plugin has not made the changes, time to fix that.
 if firstRun:
+    # EDDBlink plugin has not made the changes, time to fix that.
     print("EDDBlink plugin has not been run at least once, running now.")
     print("command: 'python trade.py import -P eddblink -O clean,skipvend'")
     trade.main(('trade.py','import','-P','eddblink','-O','clean,skipvend'))
     print("Finished running EDDBlink plugin, no need to run again.")
 
-if tmpFile.find("from_live INTEGER DEFAULT 0 NOT NULL,") == -1:
-    print("Database not updated by EDDBlink v0.26+, running now.")
-    trade.main(('trade.py','import','-P','eddblink'))
+else:
+    print("Running EDDBlink to perform any needed updates.")
+    options = 'item'
+    if config['side'] == 'server':
+        options += ',fallback'
+    trade.main(('trade.py','import','-P','eddblink','-O',options))
     # Check to see if plugin updated database.
     with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
         tmpFile = fh.read()
-    if tmpFile.find("from_live INTEGER DEFAULT 0 NOT NULL,") == -1:
-        sys.exit("EDDBlink plugin not at least v0.26, must update for listener to work correctly.")
+    if tmpFile.find("type_id INTEGER DEFAULT 0 NOT NULL,") == -1:
+        sys.exit("EDDBlink plugin must be updated for listener to work correctly.")
 
 update_busy = False
 process_ack = False
@@ -858,22 +890,17 @@ export_busy = False
 dataPath = Path(tradeenv.TradeEnv().dataDir).resolve()
 eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
 
-db_name, item_ids, system_names, station_ids = update_dicts()
+db_name, item_ids, system_ids, station_ids = update_dicts()
 
 print("Press CTRL-C at any time to quit gracefully.")
 try:
-    listener_thread = threading.Thread(target=get_messages)
-    update_thread = threading.Thread(target=check_update)
-    process_thread = threading.Thread(target=process_messages)
-    export_thread = threading.Thread(target=export_listings)
-    
-    listener_thread.start()
     update_thread.start()
     # Give the update checker enough time to see if an update is needed,
     # before starting the message processor and listings exporter.
     time.sleep(5)
     process_thread.start()
     export_thread.start()
+
     while True:
         time.sleep(1)
 except KeyboardInterrupt:
