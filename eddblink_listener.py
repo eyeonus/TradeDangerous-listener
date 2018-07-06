@@ -22,7 +22,6 @@ from calendar import timegm
 from pathlib import Path
 from collections import defaultdict, namedtuple, deque, OrderedDict
 from distutils.version import LooseVersion
-from macpath import curdir
 
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
 #
