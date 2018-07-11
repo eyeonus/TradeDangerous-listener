@@ -266,9 +266,13 @@ def db_execute(db, sql_cmd, args = None):
             else:
                 result = cur.execute(sql_cmd)
             success = True
-        except sqlite3.OperationalError:
-            print("Database is locked, waiting for access.", end = "\r")
-            time.sleep(1)
+        except sqlite3.OperationalError as e:
+                if "locked" not in str(e):
+                    success = True
+                    raise sqlite3.OperationalError(e)
+                else:
+                    print("Database is locked, waiting for access.", end = "\r")
+                    time.sleep(1)
     return result
     
 
@@ -538,8 +542,12 @@ def process_messages():
                     try:
                         db.commit()
                         success = True
-                    except sqlite3.OperationalError:
-                        print("Database is locked, waiting for access.", end = "\r")
+                    except sqlite3.OperationalError as e:
+                        if "locked" not in str(e):
+                            success = True
+                            raise sqlite3.OperationalError(e)
+                    else:
+                        print("(execute) Database is locked, waiting for access.", end = "\r")
                         time.sleep(1)
                     db.close()
                 break
@@ -611,6 +619,8 @@ def process_messages():
         
         for key in item_ids:
             if key in items:
+                if config['verbose']:
+                    print(system + "/" + station + " has '" + key + "'. ", end = '')
                 entry = items[key]
                 try:
                     db_execute(db, """INSERT INTO StationItem
@@ -621,6 +631,8 @@ def process_messages():
                             (station_id, entry['item_id'], modified,
                             entry['demand_price'], entry['demand_units'], entry['demand_level'],
                             entry['supply_price'], entry['supply_units'], entry['supply_level']))
+                    if config['verbose']:
+                        print("Inserted.")
                 except sqlite3.IntegrityError:
                     try:
                         db_execute(db, """UPDATE StationItem
@@ -633,11 +645,15 @@ def process_messages():
                                  entry['demand_price'], entry['demand_units'], entry['demand_level'], 
                                  entry['supply_price'], entry['supply_units'], entry['supply_level'],
                                  station_id, entry['item_id']))
+                        if config['verbose']:
+                            print("Updated.")
                     except sqlite3.IntegrityError:
                         if config['verbose']:
                             print("Unable to insert or update: " + commodity)
                 del entry
             else:
+                if config['verbose']:
+                    print(system + "/" + station + " does not have '" + key + "'.")
                 # Don't need to insert blank entries, just need to update 
                 # formerly not blank entries so they'll get deleted.
                 try:
