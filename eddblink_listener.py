@@ -626,17 +626,10 @@ def process_messages():
                            'supply_level':commodity['stockBracket'] if commodity['stockBracket'] != '' else -1,
                           }
         
-        if config['debug']:
-            print(system + "/" + station + ":")
-        
         for key in item_ids:
             if key in items:
-                if config['debug']:
-                    print("\thas '" + key + "'. ", end = '')
                 entry = items[key]
             else:
-                if config['debug']:
-                    print("\tdoes not have '" + key + "'. ", end = '')
                 entry = {'item_id':item_ids[key], 
                            'demand_price':0,
                            'demand_units':0,
@@ -662,8 +655,6 @@ def process_messages():
                             (station_id, entry['item_id'], modified,
                             entry['demand_price'], entry['demand_units'], entry['demand_level'],
                             entry['supply_price'], entry['supply_units'], entry['supply_level']))
-                if config['debug']:
-                    print("Inserted.")
             except sqlite3.IntegrityError:
                 try:
                     db_execute(db, """UPDATE StationItem
@@ -676,16 +667,11 @@ def process_messages():
                                  entry['demand_price'], entry['demand_units'], entry['demand_level'], 
                                  entry['supply_price'], entry['supply_units'], entry['supply_level'],
                                  station_id, entry['item_id']))
-                    if config['debug']:
-                        print("Updated.")                    
                 except sqlite3.IntegrityError as e:
                     if config['verbose']:
                         print("Unable to insert or update: '" + commodity + "' Error: " + str(e))
             
             del entry
-        else:
-            if config['debug']:
-                print(system + "/" + station + " does not have '" + key + "'.")
         
         # Don't try to commit if there are still messages waiting.
         if len(q) == 0:
