@@ -619,11 +619,22 @@ def process_messages():
         
         for key in item_ids:
             if key in items:
-                if config['verbose']:
-                    print(system + "/" + station + " has '" + key + "'. ", end = '')
                 entry = items[key]
-                try:
-                    db_execute(db, """INSERT INTO StationItem
+            else:
+                entry = {'item_id':item_ids[key], 
+                           'demand_price':0,
+                           'demand_units':0,
+                           'demand_level':0,
+                           'supply_price':0,
+                           'supply_units':0,
+                           'supply_level':0,
+                        }
+            
+            try:
+                # Skip inserting blank entries so as to not bloat DB.
+                if entry['demand_price'] == 0 and entry['supply_price'] == 0:
+                    raise sqlite3.IntegrityError
+                db_execute(db, """INSERT INTO StationItem
                             (station_id, item_id, modified,
                              demand_price, demand_units, demand_level,
                              supply_price, supply_units, supply_level, from_live)
@@ -631,11 +642,9 @@ def process_messages():
                             (station_id, entry['item_id'], modified,
                             entry['demand_price'], entry['demand_units'], entry['demand_level'],
                             entry['supply_price'], entry['supply_units'], entry['supply_level']))
-                    if config['verbose']:
-                        print("Inserted.")
-                except sqlite3.IntegrityError:
-                    try:
-                        db_execute(db, """UPDATE StationItem
+            except sqlite3.IntegrityError:
+                try:
+                    db_execute(db, """UPDATE StationItem
                                 SET modified = ?,
                                  demand_price = ?, demand_units = ?, demand_level = ?,
                                  supply_price = ?, supply_units = ?, supply_level = ?,
@@ -645,27 +654,11 @@ def process_messages():
                                  entry['demand_price'], entry['demand_units'], entry['demand_level'], 
                                  entry['supply_price'], entry['supply_units'], entry['supply_level'],
                                  station_id, entry['item_id']))
-                        if config['verbose']:
-                            print("Updated.")
-                    except sqlite3.IntegrityError:
-                        if config['verbose']:
-                            print("Unable to insert or update: " + commodity)
-                del entry
-            else:
-                if config['verbose']:
-                    print(system + "/" + station + " does not have '" + key + "'.")
-                # Don't need to insert blank entries, just need to update 
-                # formerly not blank entries so they'll get deleted.
-                try:
-                    db_execute(db, """UPDATE StationItem
-                                SET modified = ?,
-                                 demand_price = 0, demand_units = 0, demand_level = 0,
-                                 supply_price = 0, supply_units = 0, supply_level = 0,
-                                 from_live = 1
-                                WHERE station_id = ? AND item_id = ?""",
-                                (modified, station_id, item_ids[key]))
-                except sqlite3.IntegrityError:
-                    pass
+                except sqlite3.IntegrityError as e:
+                    if config['verbose']:
+                        print("Unable to insert or update: '" + commodity + "' Error: " + str(e))
+            
+            del entry
         
         # Don't try to commit if there are still messages waiting.
         if len(q) == 0:
@@ -677,8 +670,8 @@ def process_messages():
                 except sqlite3.OperationalError:
                     print("Database is locked, waiting for access.", end = "\r")
                     time.sleep(1)
-                
-        db.close()
+            # Don't close DB until we've committed the changes.
+            db.close()
 
         if config['verbose']:
             print("Market update for " + system + "/" + station\
