@@ -70,12 +70,12 @@ If you wish, you may copy this as "eddblink-listener-config.json" in the same fo
 
 # How it works
 
-The EDDBlink-listener program consists runs either three or four separate threads:
+The EDDBlink-listener program runs either three or four separate threads:
 1) The actual listener, which is started as soon as the startup process is complete.
 This is the thread that listens for messages and adds them to the queue.
 
 2) The update checker, which is started right after the listener.
-This is the method that runs the EDDBlink plugin when it detects an update to the EDDB dump have occurred.
+This is the method that runs the EDDBlink plugin when it detects an update to the EDDB dump has occurred.
 Before it starts the updates, it signals that it needs the DB: "EDDB update available, waiting for busy signal acknowledgement before proceeding.".
 It then waits for the listings exporter and message processor to signal they got the signal and are waiting for the update checker to complete, and then runs the update.
 When it's finished, it signals completion to the exporter and processor, and they both unpause.
@@ -95,7 +95,7 @@ Once it gets acknowledgement from the message processor, it grabs all the listin
 Once it's gotten them, it relinquishes the DB and turns off its busy signal, allowing the message processor to resume.
 It then exports all the listings it got to the live listings file.
 
-4) The message processor, which is started immediately after the listings exporter.
+4) The message processor, which is started 5 seconds after the update checker, immediately after the listings exporter.
 This is the method that actually puts the messages from the EDDN into the database.
 If it receives a busy signal from either the update checker or the listings exporter, it pauses, "Message processor acknowledging busy signal."
 When the busy signal(s) are turned off, it resumes from where it left off, "Busy signal off, message processor resuming."
