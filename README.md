@@ -102,3 +102,4 @@ When the busy signal(s) are turned off, it resumes from where it left off, "Busy
 When it is active, it pulls the first message from the queue being built up by the listener, does some processing, and inserts it into the DB, setting the "from_live" flag for each entry it inserts to 1.
 If there are still messages in the queue, it immediately proceeds to process the next message.
 If there are no messages in the queue remaining, it tells the DB to commit the changes it has made.
+

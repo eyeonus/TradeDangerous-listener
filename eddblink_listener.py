@@ -389,6 +389,7 @@ def load_config():
     config = OrderedDict([\
                             ('side', 'client'),                                                      \
                             ('verbose', True),                                                       \
+                            ('debug', False),                                                        \
                             ('plugin_options', "all,skipvend,force"),                                \
                             ('check_update_every_x_sec', 3600),                                      \
                             ('export_every_x_sec', 300),                                             \
@@ -464,6 +465,10 @@ def validate_config():
     if not isinstance(config["verbose"], bool):
         valid = False
         config_file = config_file.replace('"verbose"','"verbose_invalid"')
+
+    if not isinstance(config["debug"], bool):
+        valid = False
+        config_file = config_file.replace('"debug"','"debug_invalid"')
         
     # For this one, rather than completely replace invalid values with the default,
     # check to see if any of the values are valid, and keep them, prepnding the
@@ -619,6 +624,8 @@ def process_messages():
         
         for key in item_ids:
             if key in items:
+                if config['debug']:
+                    print(system + "/" + station + " has '" + key + "'. ", end = '')
                 entry = items[key]
             else:
                 entry = {'item_id':item_ids[key], 
@@ -642,6 +649,8 @@ def process_messages():
                             (station_id, entry['item_id'], modified,
                             entry['demand_price'], entry['demand_units'], entry['demand_level'],
                             entry['supply_price'], entry['supply_units'], entry['supply_level']))
+                if config['debug']:
+                    print("Inserted.")
             except sqlite3.IntegrityError:
                 try:
                     db_execute(db, """UPDATE StationItem
@@ -654,11 +663,16 @@ def process_messages():
                                  entry['demand_price'], entry['demand_units'], entry['demand_level'], 
                                  entry['supply_price'], entry['supply_units'], entry['supply_level'],
                                  station_id, entry['item_id']))
+                    if config['debug']:
+                        print("Updated.")                    
                 except sqlite3.IntegrityError as e:
                     if config['verbose']:
                         print("Unable to insert or update: '" + commodity + "' Error: " + str(e))
             
             del entry
+        else:
+            if config['debug']:
+                print(system + "/" + station + " does not have '" + key + "'.")
         
         # Don't try to commit if there are still messages waiting.
         if len(q) == 0:
