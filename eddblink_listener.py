@@ -596,6 +596,10 @@ def process_messages():
         
         start_update = datetime.datetime.now()
         items = dict()
+        if config['debug']:
+            with debugPath.open('a', encoding = "utf-8") as fh:
+                fh.write(system + "/" + station + " with station_id '" + str(station_id) + "' updated at " + modified + " --\n")
+            
         for commodity in commodities:
             # Get item_id using commodity name from message.
             try:
@@ -622,12 +626,17 @@ def process_messages():
                            'supply_level':commodity['stockBracket'] if commodity['stockBracket'] != '' else -1,
                           }
         
+        if config['debug']:
+            print(system + "/" + station + ":")
+        
         for key in item_ids:
             if key in items:
                 if config['debug']:
-                    print(system + "/" + station + " has '" + key + "'. ", end = '')
+                    print("\thas '" + key + "'. ", end = '')
                 entry = items[key]
             else:
+                if config['debug']:
+                    print("\tdoes not have '" + key + "'. ", end = '')
                 entry = {'item_id':item_ids[key], 
                            'demand_price':0,
                            'demand_units':0,
@@ -636,6 +645,10 @@ def process_messages():
                            'supply_units':0,
                            'supply_level':0,
                         }
+            
+            if config['debug']:
+                with debugPath.open('a', encoding = "utf-8") as fh:
+                    fh.write("\t" + key + ": " + str(entry) + "\n")
             
             try:
                 # Skip inserting blank entries so as to not bloat DB.
@@ -911,6 +924,7 @@ export_busy = False
 
 dataPath = Path(tradeenv.TradeEnv().dataDir).resolve()
 eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
+debugPath = eddbPath / Path("debug.txt")
 
 db_name, item_ids, system_ids, station_ids = update_dicts()
 
