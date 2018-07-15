@@ -596,6 +596,10 @@ def process_messages():
         
         start_update = datetime.datetime.now()
         items = dict()
+        if config['debug']:
+            with debugPath.open('a', encoding = "utf-8") as fh:
+                fh.write(system + "/" + station + " with station_id '" + str(station_id) + "' updated at " + modified + " --\n")
+            
         for commodity in commodities:
             # Get item_id using commodity name from message.
             try:
@@ -624,8 +628,6 @@ def process_messages():
         
         for key in item_ids:
             if key in items:
-                if config['debug']:
-                    print(system + "/" + station + " has '" + key + "'. ", end = '')
                 entry = items[key]
             else:
                 entry = {'item_id':item_ids[key], 
@@ -636,6 +638,10 @@ def process_messages():
                            'supply_units':0,
                            'supply_level':0,
                         }
+            
+            if config['debug']:
+                with debugPath.open('a', encoding = "utf-8") as fh:
+                    fh.write("\t" + key + ": " + str(entry) + "\n")
             
             try:
                 # Skip inserting blank entries so as to not bloat DB.
@@ -649,8 +655,6 @@ def process_messages():
                             (station_id, entry['item_id'], modified,
                             entry['demand_price'], entry['demand_units'], entry['demand_level'],
                             entry['supply_price'], entry['supply_units'], entry['supply_level']))
-                if config['debug']:
-                    print("Inserted.")
             except sqlite3.IntegrityError:
                 try:
                     db_execute(db, """UPDATE StationItem
@@ -663,16 +667,11 @@ def process_messages():
                                  entry['demand_price'], entry['demand_units'], entry['demand_level'], 
                                  entry['supply_price'], entry['supply_units'], entry['supply_level'],
                                  station_id, entry['item_id']))
-                    if config['debug']:
-                        print("Updated.")                    
                 except sqlite3.IntegrityError as e:
                     if config['verbose']:
                         print("Unable to insert or update: '" + commodity + "' Error: " + str(e))
             
             del entry
-        else:
-            if config['debug']:
-                print(system + "/" + station + " does not have '" + key + "'.")
         
         # Don't try to commit if there are still messages waiting.
         if len(q) == 0:
@@ -911,6 +910,7 @@ export_busy = False
 
 dataPath = Path(tradeenv.TradeEnv().dataDir).resolve()
 eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
+debugPath = eddbPath / Path("debug.txt")
 
 db_name, item_ids, system_ids, station_ids = update_dicts()
 
