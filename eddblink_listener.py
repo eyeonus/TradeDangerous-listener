@@ -211,10 +211,16 @@ class Listener(object):
                     whitelist_match = list(filter(lambda x: x.get('software').lower() == software.lower(), config['whitelist']))
                     # Upload software not on whitelist is ignored.
                     if len(whitelist_match) == 0:
+                        if config['debug']:
+                            with debugPath.open('a', encoding = "utf-8") as fh:
+                                fh.write(system + "/" + station + " rejected with:" + software + swVersion +"\n")
                         continue
                     # Upload software with version less than the defined minimum is ignored. 
                     if whitelist_match[0].get("minversion"):
                         if LooseVersion(swVersion) < LooseVersion(whitelist_match[0].get("minversion")):
+                            if config['debug']:
+                                with debugPath.open('a', encoding = "utf-8") as fh:
+                                    fh.write(system + "/" + station + " rejected with:" + software + swVersion +"\n")
                             continue
                     # We've received real data.
 
@@ -569,6 +575,9 @@ def process_messages():
         # Get the station_is using the system and station names.
         system = entry.system.upper()
         station = entry.station.upper()
+        # And the software version used to upload the schema.
+        software = entry.software
+        swVersion = entry.version
         
         try:
             station_id = station_ids[system + "/" + station]
@@ -598,7 +607,7 @@ def process_messages():
         items = dict()
         if config['debug']:
             with debugPath.open('a', encoding = "utf-8") as fh:
-                fh.write(system + "/" + station + " with station_id '" + str(station_id) + "' updated at " + modified + " --\n")
+                fh.write(system + "/" + station + " with station_id '" + str(station_id) + "' updated at " + modified + " using " + software + swVersion + " ---\n")
             
         for commodity in commodities:
             # Get item_id using commodity name from message.
