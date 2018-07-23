@@ -749,6 +749,7 @@ def export_listings():
                         break
                     print("Busy signal off, listings exporter resuming.")
                     now = time.time()
+                time.sleep(1)
             
             # We may be here because we broke out of the waiting loop,
             # so we need to see if we lost go and quit the main loop if so. 
