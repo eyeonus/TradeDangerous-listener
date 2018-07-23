@@ -736,6 +736,8 @@ def export_listings():
             # before doing an export, watch for busy signal or shutdown signal
             # while waiting. 
             while time.time() < now + config['export_every_x_sec']:
+                # Stop the thread from running away with itself
+                time.sleep(5)
                 if not go:
                     break
                 if update_busy:
