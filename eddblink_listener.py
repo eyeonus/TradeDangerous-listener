@@ -535,6 +535,9 @@ def process_messages():
     
     while go:
         db = tdb.getDB()
+        # Place the database into autocommit mode to avoid issues with 
+        # sqlite3 doing automatic transactions.
+        db.isolation_level = None
         
         # We don't want the threads interfering with each other,
         # so pause this one if either the update checker or
@@ -547,8 +550,11 @@ def process_messages():
             process_ack = False
             # Just in case we caught the shutdown command while waiting.
             if not go:
-                #Make sure any changes are committed before shutting down.
-                success = False
+                # Make sure any changes are committed before shutting down.
+                #
+                # As we are using autocommit, bypass the db.commit() for now
+                # by setting success to "True"
+                success = True
                 while not success:
                     try:
                         db.commit()
@@ -684,7 +690,9 @@ def process_messages():
         
         # Don't try to commit if there are still messages waiting.
         if len(q) == 0:
-            success = False
+            # As we are using autocommit, bypass the db.commit() for now
+            # by setting success to "True"
+            success = True
             while not success:
                 try:
                     db.commit()
