@@ -532,13 +532,24 @@ def validate_config():
 def process_messages():
     global process_ack
     tdb = tradedb.TradeDB(load=False)
-    
+    conn = tdb.getDB()
+    # Place the database into autocommit mode to avoid issues with
+    # sqlite3 doing automatic transactions.
+    conn.isolation_level = None
+    curs = conn.cursor()
+
+    # same SQL every time
+    updStmt = "UPDATE Station SET system_id = ? WHERE station_id = ?"
+    delStmt = "DELETE FROM StationItem WHERE station_id = ?"
+    insStmt = (
+        "INSERT INTO StationItem("
+        " station_id, item_id, modified,"
+        " demand_price, demand_units, demand_level,"
+        " supply_price, supply_units, supply_level, from_live)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"
+    )
+
     while go:
-        db = tdb.getDB()
-        # Place the database into autocommit mode to avoid issues with 
-        # sqlite3 doing automatic transactions.
-        db.isolation_level = None
-        
         # We don't want the threads interfering with each other,
         # so pause this one if either the update checker or
         # listings exporter report that they're active.
@@ -550,23 +561,6 @@ def process_messages():
             process_ack = False
             # Just in case we caught the shutdown command while waiting.
             if not go:
-                # Make sure any changes are committed before shutting down.
-                #
-                # As we are using autocommit, bypass the db.commit() for now
-                # by setting success to "True"
-                success = True
-                while not success:
-                    try:
-                        db.commit()
-                        success = True
-                    except sqlite3.OperationalError as e:
-                        if "locked" not in str(e):
-                            success = True
-                            raise sqlite3.OperationalError(e)
-                    else:
-                        print("(execute) Database is locked, waiting for access.", end = "\r")
-                        time.sleep(1)
-                    db.close()
                 break
             print("Busy signal off, message processor resuming.")
 
@@ -577,131 +571,83 @@ def process_messages():
         except IndexError:
             time.sleep(1)
             continue
-        
+
         # Get the station_is using the system and station names.
         system = entry.system.upper()
         station = entry.station.upper()
         # And the software version used to upload the schema.
         software = entry.software
         swVersion = entry.version
-        
-        try:
-            station_id = station_ids[system + "/" + station]
-        except KeyError:
-            try:
-                # Mobile stations are stored in the dict a bit differently.
-                station_id = station_ids["MEGASHIP/" + station]
-                system_id = system_ids[system]
+
+        station_id = station_ids.get(system + "/" + station)
+        if not station_id:
+            # Mobile stations are stored in the dict a bit differently.
+            station_id = station_ids.get("MEGASHIP/" + station)
+            system_id = system_ids.get(system)
+            if station_id and system_id:
                 print("Megaship station, updating system.", end=" ")
                 # Update the system the station is in, in case it has changed.
-                try:
-                    db_execute(db, """UPDATE Station
-                               SET system_id = ?
-                               WHERE station_id = ?""",
-                            (system_id, station_id))
-                except Exception as e:
-                    print(e)
-            except KeyError as e:
+                success = False
+                while not success:
+                    try:
+                        curs.execute("BEGIN IMMEDIATE")
+                        success = True
+                    except sqlite3.OperationalError:
+                        print("Database is locked, waiting for access.", end = "\r")
+                        time.sleep(1)
+                curs.execute(updStmt, (system_id, station_id))
+                conn.commit()
+            else:
                 if config['verbose']:
                     print("ERROR: Not found in Stations: " + system + "/" + station)
-                    continue
-        
+                continue
+
         modified = entry.timestamp.replace('T',' ').replace('Z','')
         commodities= entry.commodities
-        
+
         start_update = datetime.datetime.now()
-        items = dict()
         if config['debug']:
             with debugPath.open('a', encoding = "utf-8") as fh:
                 fh.write(system + "/" + station + " with station_id '" + str(station_id) + "' updated at " + modified + " using " + software + swVersion + " ---\n")
-            
+
+        itemList = []
         for commodity in commodities:
+            if commodity['sellPrice'] == 0 and commodity['buyPrice'] == 0:
+                # Skip blank entries
+                continue
             # Get item_id using commodity name from message.
-            try:
-                name = db_name[commodity['name'].lower()]
-            except KeyError:
+            itemName = db_name.get(commodity['name'].lower())
+            if not itemName:
                 if config['verbose']:
                     print("Ignoring rare item: " + commodity['name'])
                 continue
             # Some items, mostly salvage items, are found in db_name but not in item_ids
             # (This is entirely EDDB.io's fault.)
-            try:
-                item_id = item_ids[name]
-            except KeyError:
+            item_id = item_ids.get(itemName)
+            if not item_id:
                 if config['verbose']:
-                    print("EDDB.io does not include likely salvage item: '" + name + "'")
+                    print("EDDB.io does not include likely salvage item: '" + itemName + "'")
                 continue
-            
-            items[name] = {'item_id':item_id, 
-                           'demand_price':commodity['sellPrice'],
-                           'demand_units':commodity['demand'],
-                           'demand_level':commodity['demandBracket'] if commodity['demandBracket'] != '' else -1,
-                           'supply_price':commodity['buyPrice'],
-                           'supply_units':commodity['stock'],
-                           'supply_level':commodity['stockBracket'] if commodity['stockBracket'] != '' else -1,
-                          }
-        
-        for key in item_ids:
-            if key in items:
-                entry = items[key]
-            else:
-                entry = {'item_id':item_ids[key], 
-                           'demand_price':0,
-                           'demand_units':0,
-                           'demand_level':0,
-                           'supply_price':0,
-                           'supply_units':0,
-                           'supply_level':0,
-                        }
-            
-            if config['debug']:
-                with debugPath.open('a', encoding = "utf-8") as fh:
-                    fh.write("\t" + key + ": " + str(entry) + "\n")
-            
+
+            itemList.append((
+                station_id, item_id, modified,
+                commodity['sellPrice'], commodity['demand'],
+                commodity['demandBracket'] if commodity['demandBracket'] != '' else -1,
+                commodity['buyPrice'], commodity['stock'],
+                commodity['stockBracket'] if commodity['stockBracket'] != '' else -1,
+            ))
+
+        success = False
+        while not success:
             try:
-                # Skip inserting blank entries so as to not bloat DB.
-                if entry['demand_price'] == 0 and entry['supply_price'] == 0:
-                    raise sqlite3.IntegrityError
-                db_execute(db, """INSERT INTO StationItem
-                            (station_id, item_id, modified,
-                             demand_price, demand_units, demand_level,
-                             supply_price, supply_units, supply_level, from_live)
-                            VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, 1 )""",
-                            (station_id, entry['item_id'], modified,
-                            entry['demand_price'], entry['demand_units'], entry['demand_level'],
-                            entry['supply_price'], entry['supply_units'], entry['supply_level']))
-            except sqlite3.IntegrityError:
-                try:
-                    db_execute(db, """UPDATE StationItem
-                                SET modified = ?,
-                                 demand_price = ?, demand_units = ?, demand_level = ?,
-                                 supply_price = ?, supply_units = ?, supply_level = ?,
-                                 from_live = 1
-                                WHERE station_id = ? AND item_id = ?""",
-                                (modified, 
-                                 entry['demand_price'], entry['demand_units'], entry['demand_level'], 
-                                 entry['supply_price'], entry['supply_units'], entry['supply_level'],
-                                 station_id, entry['item_id']))
-                except sqlite3.IntegrityError as e:
-                    if config['verbose']:
-                        print("Unable to insert or update: '" + commodity + "' Error: " + str(e))
-            
-            del entry
-        
-        # Don't try to commit if there are still messages waiting.
-        if len(q) == 0:
-            # As we are using autocommit, bypass the db.commit() for now
-            # by setting success to "True"
-            success = True
-            while not success:
-                try:
-                    db.commit()
-                    success = True
-                except sqlite3.OperationalError:
-                    print("Database is locked, waiting for access.", end = "\r")
-                    time.sleep(1)
-            # Don't close DB until we've committed the changes.
-            db.close()
+                curs.execute("BEGIN IMMEDIATE")
+                success = True
+            except sqlite3.OperationalError:
+                print("Database is locked, waiting for access.", end = "\r")
+                time.sleep(1)
+        curs.execute(delStmt, (station_id,))
+        curs.executemany(insStmt, itemList)
+        conn.commit()
 
         if config['verbose']:
             print("Market update for " + system + "/" + station\
