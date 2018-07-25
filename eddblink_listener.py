@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.6
+#!/usr/bin/env python
 
 from __future__ import generators
 import json
@@ -379,6 +379,7 @@ def check_update():
                     print("Shutting down update checker.")
                     break
                 time.sleep(1)
+        del localModded, dumpModded
                 
 def load_config():
     """
@@ -416,7 +417,7 @@ def load_config():
     
     # Load the settings from the configuration file if it exists.
     if Path.exists(Path("eddblink-listener-config.json")):
-        with open("eddblink-listener-config.json", "rU") as fh:
+        with open("eddblink-listener-config.json", "r") as fh:
             try:
                 temp = json.load(fh, object_pairs_hook=OrderedDict)
                 # For each setting in config,
@@ -545,7 +546,7 @@ def process_messages():
     updStmt = "UPDATE Station SET system_id = ? WHERE station_id = ?"
     delStmt = "DELETE FROM StationItem WHERE station_id = ?"
     insStmt = (
-        "INSERT INTO StationItem("
+        "INSERT OR IGNORE INTO StationItem("
         " station_id, item_id, modified,"
         " demand_price, demand_units, demand_level,"
         " supply_price, supply_units, supply_level, from_live)"
@@ -649,7 +650,12 @@ def process_messages():
                 print("Database is locked, waiting for access.", end = "\r")
                 time.sleep(1)
         curs.execute(delStmt, (station_id,))
-        curs.executemany(insStmt, itemList)
+        try:
+            curs.executemany(insStmt, itemList)
+        except Error as e:
+            if config['debug']:
+                with debugPath.open('a', encoding = "utf-8") as fh:
+                    fh.write("Error '" + str(e) + "' when inserting message:\n" + str(itemList))
         conn.commit()
 
         if config['verbose']:
@@ -783,7 +789,7 @@ def update_dicts():
     edmc_dict = csv.DictReader(codecs.iterdecode(edmc_csv, 'utf-8'))
     for line in iter(edmc_dict):
         db_name[line['symbol'].lower()] = line['name']
-    #A few of these don't match between EDMC and EDDB, so we fix them individually.
+    # A few of these don't match between EDMC and EDDB, so we fix them individually.
     db_name['airelics'] = 'Ai Relics'
     db_name['drones'] = 'Limpet'
     db_name['liquidoxygen'] = 'Liquid Oxygen'
@@ -796,7 +802,7 @@ def update_dicts():
     
     # We'll use this to get the item_id from the item's name because it's faster than a database lookup.
     item_ids = dict()
-    with open(str(dataPath / Path("Item.csv")), "rU") as fh:
+    with open(str(dataPath / Path("Item.csv")), "r") as fh:
         items = csv.DictReader(fh, quotechar="'")
         for item in items:
             item_ids[item['name']] =  int(item['unq:item_id'])
@@ -804,13 +810,13 @@ def update_dicts():
     # We're using these for the same reason. 
     system_names = dict()
     system_ids = dict()
-    with open(str(dataPath / Path("System.csv")), "rU") as fh:
+    with open(str(dataPath / Path("System.csv")), "r") as fh:
         systems = csv.DictReader(fh, quotechar="'")
         for system in systems:
             system_names[int(system['unq:system_id'])] = system['name'].upper()
             system_ids[system['name'].upper()] = int(system['unq:system_id'])
     station_ids = dict()
-    with open(str(dataPath / Path("Station.csv")), "rU") as fh:
+    with open(str(dataPath / Path("Station.csv")), "r") as fh:
         stations = csv.DictReader(fh, quotechar="'")
         for station in stations:
             # Mobile stations can move between systems. The mobile stations 
