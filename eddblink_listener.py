@@ -392,6 +392,10 @@ def load_config():
     write_config = False
     # Initialize config with default settings.
     # NOTE: Whitespace added for readability.
+    #
+    # eddi has been sending bad data
+    # removed from whitelist until fixed    
+    # OrderedDict([ ('software', 'eddi'), ('minversion', '2.2')    ])  \
     config = OrderedDict([\
                             ('side', 'client'),                                                      \
                             ('verbose', True),                                                       \
@@ -405,8 +409,7 @@ def load_config():
                                     OrderedDict([ ('software', 'E:D Market Connector [Windows]') ]), \
                                     OrderedDict([ ('software', 'E:D Market Connector [Mac OS]')  ]), \
                                     OrderedDict([ ('software', 'E:D Market Connector [Linux]')   ]), \
-                                    OrderedDict([ ('software', 'EDDiscovery')                    ]), \
-                                    OrderedDict([ ('software', 'eddi'), ('minversion', '2.2')    ])  \
+                                    OrderedDict([ ('software', 'EDDiscovery')                    ])  \
                                 ]                                                                    \
                             )                                                                        \
                ])
