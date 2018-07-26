@@ -396,7 +396,10 @@ def load_config():
     #
     # eddi has been sending bad data
     # removed from whitelist until fixed    
-    # OrderedDict([ ('software', 'eddi'), ('minversion', '2.2')    ])  \
+    # [eye EDIT:] 
+    # Removing it from here only keeps it from being written by default,
+    # it doesn't remove it from existing configs.
+    # That needs to be done in the validate method.
     config = OrderedDict([\
                             ('side', 'client'),                                                      \
                             ('verbose', True),                                                       \
@@ -410,7 +413,8 @@ def load_config():
                                     OrderedDict([ ('software', 'E:D Market Connector [Windows]') ]), \
                                     OrderedDict([ ('software', 'E:D Market Connector [Mac OS]')  ]), \
                                     OrderedDict([ ('software', 'E:D Market Connector [Linux]')   ]), \
-                                    OrderedDict([ ('software', 'EDDiscovery')                    ])  \
+#                                    OrderedDict([ ('software', 'eddi'), ('minversion', '2.2')    ]),  \
+                                    OrderedDict([ ('software', 'EDDiscovery')                    ]) \
                                 ]                                                                    \
                             )                                                                        \
                ])
@@ -525,13 +529,20 @@ def validate_config():
     if not Path.exists(Path(config['export_path'])):
         valid = False
         config_file = config_file.replace('"export_path"','"export_path_invalid"')
-        
+    
+    # Here, we get rid of 'eddi' in existing configs.
+    for entry in config['whitelist']:
+        if entry['software'].lower() == 'eddi':
+            config_file = config_file.replace(',\n        {\n            "software": "eddi",\n            "minversion": "2.2"\n        }','')
+            valid = False
+            
     if not valid:
         # Before we reload the config to set the invalid values back to default,
         # we need to write the changes we made to the file.
         with open("eddblink-listener-config.json", "w") as fh:
             fh.write(config_file)
         config = load_config()
+    
 
 def process_messages():
     global process_ack
