@@ -667,7 +667,14 @@ def process_messages():
             if config['debug']:
                 with debugPath.open('a', encoding = "utf-8") as fh:
                     fh.write("Error '" + str(e) + "' when inserting message:\n" + str(itemList))
-        conn.commit()
+        success = False
+        while not success:
+            try:
+                conn.commit()
+                success = True
+            except sqlite3.OperationalError:
+                print("Database is locked, waiting for access.", end = "\r")
+                time.sleep(1)
 
         if config['verbose']:
             print("Market update for " + system + "/" + station\
