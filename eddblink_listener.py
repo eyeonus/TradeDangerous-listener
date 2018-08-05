@@ -16,7 +16,6 @@ import csv
 import codecs
 import plugins.eddblink_plug
 import sys
-import numbers
 
 from urllib import request
 from calendar import timegm
@@ -529,8 +528,7 @@ def validate_config():
         valid = False
         config_file = config_file.replace('"export_every_x_sec"','"export_every_x_sec_invalid"')
     
-    if isinstance(config['server_maint_every_x_hour'], numbers.Number):
-        print(config['server_maint_every_x_hour'])
+    if isinstance(config['server_maint_every_x_hour'], (int,float)):
         if config['server_maint_every_x_hour'] < 1 or config['server_maint_every_x_hour'] > 24:
             valid = False
             config_file = config_file.replace('"server_maint_every_x_hour"','"server_maint_every_x_hour_invalid"')
