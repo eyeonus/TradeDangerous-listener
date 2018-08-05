@@ -16,6 +16,7 @@ import csv
 import codecs
 import plugins.eddblink_plug
 import sys
+import numbers
 
 from urllib import request
 from calendar import timegm
@@ -407,6 +408,7 @@ def load_config():
                             ('plugin_options', "all,skipvend,force"),                                \
                             ('check_update_every_x_sec', 3600),                                      \
                             ('export_every_x_sec', 300),                                             \
+                            ('server_maint_every_x_hour', 12),                                          \
                             ('export_path', './data/eddb'),                                          \
                             ('whitelist',                                                            \
                                 [                                                                    \
@@ -485,14 +487,15 @@ def validate_config():
         config_file = config_file.replace('"debug"','"debug_invalid"')
         
     # For this one, rather than completely replace invalid values with the default,
-    # check to see if any of the values are valid, and keep them, prepnding the
+    # check to see if any of the values are valid, and keep them, prepending the
     # default values to the setting if they aren't already in the setting.
     if isinstance(config['plugin_options'], str):
         options = config['plugin_options'].split(',')
         valid_options = ""
         for option in options:
-            if option in ['item','system','station','ship','shipvend','upgrade',\
-                          'upvend','listings','all','clean','skipvend','force','fallback']:
+            if option in ['item','system','station','ship','shipvend',\
+                          'upgrade','upvend','listings','all','clean',\
+                          'skipvend','force','fallback','progbar','solo']:
                 if valid_options != "":
                     valid_options += ","
                 valid_options += option
@@ -525,7 +528,16 @@ def validate_config():
     else:
         valid = False
         config_file = config_file.replace('"export_every_x_sec"','"export_every_x_sec_invalid"')
-        
+    
+    if isinstance(config['server_maint_every_x_hour'], numbers.Number):
+        print(config['server_maint_every_x_hour'])
+        if config['server_maint_every_x_hour'] < 1 or config['server_maint_every_x_hour'] > 24:
+            valid = False
+            config_file = config_file.replace('"server_maint_every_x_hour"','"server_maint_every_x_hour_invalid"')
+    else:
+        valid = False
+        config_file = config_file.replace('"server_maint_every_x_hour"','"server_maint_every_x_hour_invalid"')
+    
     if not Path.exists(Path(config['export_path'])):
         valid = False
         config_file = config_file.replace('"export_path"','"export_path_invalid"')
@@ -705,6 +717,8 @@ def export_listings():
     global export_ack, export_busy
 
     if config['side'] == 'server':
+        # We want to perform some automatic DB maintenance when running as server.
+        maintenance_time = time.time() + (config['server_maint_every_x_hour'] * 3600)
         tdb = tradedb.TradeDB(load=False)
         db = tdb.getDB()
         listings_file = (Path(config['export_path']).resolve() / Path("listings-live.csv"))
@@ -730,6 +744,15 @@ def export_listings():
                         break
                     print("Busy signal off, listings exporter resuming.")
                     now = time.time()
+                if time.time() >= maintenance_time:
+                    print("Performing server maintenance tasks.")
+                    try:
+                        db_execute(db, "VACUUM")
+                        db_execute(db, "PRAGMA optimize")
+                    except Error as e:
+                        print("Error performing maintenance: " + str(e) )
+                    maintenance_time = time.time() + (config['server_maint_every_x_hour'] * 3600)
+                    print("Server maintenance tasks completed.")
                 time.sleep(1)
             
             # We may be here because we broke out of the waiting loop,
@@ -883,8 +906,8 @@ if firstRun:
     print("Finished running EDDBlink plugin, no need to run again.")
 
 else:
-    print("Running EDDBlink to perform any needed updates.")
-    options = 'item'
+    print("Running EDDBlink to perform any needed infrastructure updates.")
+    options = 'solo'
     if config['side'] == 'server':
         options += ',fallback'
     trade.main(('trade.py','import','-P','eddblink','-O',options))
