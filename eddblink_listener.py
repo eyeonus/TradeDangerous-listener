@@ -277,7 +277,7 @@ def db_execute(db, sql_cmd, args = None):
                     success = True
                     raise sqlite3.OperationalError(e)
                 else:
-                    print("Database is locked, waiting for access.", end = "\r")
+                    print("Database is locked, waiting for access.", end = "\n")
                     time.sleep(1)
     return result
     
@@ -618,7 +618,7 @@ def process_messages():
                         curs.execute("BEGIN IMMEDIATE")
                         success = True
                     except sqlite3.OperationalError:
-                        print("Database is locked, waiting for access.", end = "\r")
+                        print("Database is locked, waiting for access.", end = "\n")
                         time.sleep(1)
                 curs.execute(updStmt, (system_id, station_id))
                 conn.commit()
@@ -668,7 +668,7 @@ def process_messages():
                 curs.execute("BEGIN IMMEDIATE")
                 success = True
             except sqlite3.OperationalError:
-                print("Database is locked, waiting for access.", end = "\r")
+                print("Database is locked, waiting for access.", end = "\n")
                 time.sleep(1)
         curs.execute(delStmt, (station_id,))
         try:
@@ -683,7 +683,7 @@ def process_messages():
                 conn.commit()
                 success = True
             except sqlite3.OperationalError:
-                print("Database is locked, waiting for access.", end = "\r")
+                print("Database is locked, waiting for access.", end = "\n")
                 time.sleep(1)
 
         if config['verbose']:
@@ -750,7 +750,8 @@ def export_listings():
                     except Error as e:
                         print("Error performing maintenance: " + str(e) )
                     maintenance_time = time.time() + (config['server_maint_every_x_hour'] * 3600)
-                    print("Server maintenance tasks completed.")
+                    complete = datetime.datetime.now()
+                    print("Server maintenance tasks completed. " + str(complete))
                 time.sleep(1)
             
             # We may be here because we broke out of the waiting loop,
