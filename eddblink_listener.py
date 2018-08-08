@@ -753,7 +753,7 @@ def export_listings():
                     maintenance_time = time.time() + (config['server_maint_every_x_hour'] * 3600)
                     complete = datetime.datetime.now()
                     print("Server maintenance tasks completed. " + str(complete))
-                    print("Maintenance cycle took " + str(complete - start) ".")
+                    print("Maintenance cycle took " + str(complete - start) + ".")
                 time.sleep(1)
             
             # We may be here because we broke out of the waiting loop,
