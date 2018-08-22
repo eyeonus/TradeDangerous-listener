@@ -616,12 +616,12 @@ def process_messages():
                 while not success:
                     try:
                         curs.execute("BEGIN IMMEDIATE")
+                        curs.execute(updStmt, (system_id, station_id))
+                        conn.commit()
                         success = True
                     except sqlite3.OperationalError:
                         print("Database is locked, waiting for access.", end = "\n")
                         time.sleep(1)
-                curs.execute(updStmt, (system_id, station_id))
-                conn.commit()
             else:
                 if config['verbose']:
                     print("ERROR: Not found in Stations: " + system + "/" + station)
