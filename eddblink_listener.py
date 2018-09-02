@@ -573,6 +573,7 @@ def process_messages():
         " supply_price, supply_units, supply_level, from_live)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"
     )
+    avgStmt = "UPDATE Item SET avg_price = ? WHERE item_id = ?"
 
     while go:
         # We don't want the threads interfering with each other,
@@ -636,6 +637,7 @@ def process_messages():
                 fh.write(system + "/" + station + " with station_id '" + str(station_id) + "' updated at " + modified + " using " + software + swVersion + " ---\n")
 
         itemList = []
+        avgList = []
         for commodity in commodities:
             if commodity['sellPrice'] == 0 and commodity['buyPrice'] == 0:
                 # Skip blank entries
@@ -661,6 +663,9 @@ def process_messages():
                 commodity['buyPrice'], commodity['stock'],
                 commodity['stockBracket'] if commodity['stockBracket'] != '' else -1,
             ))
+            # We only "need" to update the avg_price for the few items not included in
+            # EDDB.io's API, but might as well do it for all of them.
+            avgList.append((commodity['meanPrice'], item_id))
 
         success = False
         while not success:
@@ -673,6 +678,7 @@ def process_messages():
         curs.execute(delStmt, (station_id,))
         try:
             curs.executemany(insStmt, itemList)
+            curs.executemany(avgStmt, avgList)
         except Error as e:
             if config['debug']:
                 with debugPath.open('a', encoding = "utf-8") as fh:
