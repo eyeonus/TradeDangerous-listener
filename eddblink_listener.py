@@ -653,7 +653,7 @@ def process_messages():
             item_id = item_ids.get(itemName)
             if not item_id:
                 if config['verbose']:
-                    print("EDDB.io does not include likely salvage item: '" + itemName + "'")
+                    print("EDDB.io's API does not include likely salvage item: '" + itemName + "', please inform the current TD maintainer.")
                 continue
 
             itemList.append((
@@ -846,7 +846,7 @@ def update_dicts():
     db_name['nonlethalweapons'] = 'Non-lethal Weapons'
     db_name['sap8corecontainer'] = 'Sap 8 Core Container'
     db_name['trinketsoffortune'] = 'Trinkets Of Hidden Fortune'
-    db_name['wreckagecomponents'] = 'Salvageable Wreckage'
+    db_name['ancientkey'] = 'Ancient Key'
     
     # We'll use this to get the item_id from the item's name because it's faster than a database lookup.
     item_ids = dict()
