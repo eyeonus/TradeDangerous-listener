@@ -847,6 +847,8 @@ def update_dicts():
     db_name['sap8corecontainer'] = 'Sap 8 Core Container'
     db_name['trinketsoffortune'] = 'Trinkets Of Hidden Fortune'
     db_name['ancientkey'] = 'Ancient Key'
+    db_name['politicalprisoner'] = 'Political Prisoner'
+    db_name['hostage'] = 'Hostage'
     
     # We'll use this to get the item_id from the item's name because it's faster than a database lookup.
     item_ids = dict()
