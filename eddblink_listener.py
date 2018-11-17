@@ -359,7 +359,9 @@ def check_update():
             update_busy = True
             print("EDDB update available, waiting for busy signal acknowledgement before proceeding.")
             while not (process_ack and export_ack):
-                pass
+                if config['verbose']:
+                    print("Still waiting for acknowledgment.")
+                time.sleep(1)
             print("Busy signal acknowledged, performing EDDB dump update.")
             options = config['plugin_options']
             if config['side'] == "server":
@@ -375,11 +377,14 @@ def check_update():
         else:
             print("No update, checking again in "+ next_check + ".")
             while time.time() < now + config['check_update_every_x_sec']:
+                if config['verbose']:
+                    print("Update checker is sleeping: " + str(now + config['check_update_every_x_sec'] - time.time()) + " seconds remain until next check.")
                 if not go:
                     print("Shutting down update checker.")
                     break
                 time.sleep(1)
-        del localModded, dumpModded
+        
+        del localModded, dumpModded, now, dDL, dTL, dumpDT
                 
 def load_config():
     """
