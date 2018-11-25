@@ -684,7 +684,7 @@ def process_messages():
         try:
             curs.executemany(insStmt, itemList)
             curs.executemany(avgStmt, avgList)
-        except Error as e:
+        except Exception as e:
             if config['debug']:
                 with debugPath.open('a', encoding = "utf-8") as fh:
                     fh.write("Error '" + str(e) + "' when inserting message:\n" + str(itemList))
