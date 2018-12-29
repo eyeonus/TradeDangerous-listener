@@ -846,14 +846,11 @@ def update_dicts():
     db_name['airelics'] = 'Ai Relics'
     db_name['drones'] = 'Limpet'
     db_name['liquidoxygen'] = 'Liquid Oxygen'
-    db_name['methanolmonohydratecrystals'] = 'Methanol Monohydrate'
     db_name['coolinghoses'] = 'Micro-Weave Cooling Hoses'
     db_name['nonlethalweapons'] = 'Non-lethal Weapons'
     db_name['sap8corecontainer'] = 'Sap 8 Core Container'
     db_name['trinketsoffortune'] = 'Trinkets Of Hidden Fortune'
     db_name['ancientkey'] = 'Ancient Key'
-    db_name['politicalprisoner'] = 'Political Prisoner'
-    db_name['hostage'] = 'Hostage'
     
     # We'll use this to get the item_id from the item's name because it's faster than a database lookup.
     item_ids = dict()
