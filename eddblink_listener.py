@@ -857,7 +857,6 @@ def update_dicts():
         for item in items:
             item_ids[item[iid_key]] =  int(item['unq:item_id'])
         print(item_ids)
-        Print
     
     # We're using these for the same reason. 
     system_names = dict()
