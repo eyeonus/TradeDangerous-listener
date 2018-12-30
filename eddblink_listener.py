@@ -647,19 +647,19 @@ def process_messages():
             if commodity['sellPrice'] == 0 and commodity['buyPrice'] == 0:
                 # Skip blank entries
                 continue
-            # Get item_id using commodity name from message.
-            itemName = db_name.get(commodity['name'].lower())
-            if not itemName:
+            # Get fdev_id using commodity name from message.
+            item_edid = db_name.get(commodity['name'].lower())
+            if not item_edid:
                 if config['verbose']:
                     print("Ignoring rare item: " + commodity['name'])
                 continue
-            # Some items, mostly salvage items, are found in db_name but not in item_ids
+            # Some items, mostly recently added items, are found in db_name but not in item_ids
             # (This is entirely EDDB.io's fault.)
-            item_id = item_ids.get(itemName)
+            item_id = item_ids.get(item_edid)
             if not item_id:
                 if config['verbose']:
-                    print("EDDB.io's API does not include likely salvage item: '" + itemName + "', please inform the current TD maintainer.")
-                continue
+                    print("EDDB.io's API does not include likely recently added item: '" + commodity['name'] + "', using fdev_id as placeholder, please inform the current EDDB.io maintainer.")
+                item_id = item_edid
 
             itemList.append((
                 station_id, item_id, modified,
@@ -835,29 +835,29 @@ def export_listings():
         export_ack = True
 
 def update_dicts():
-    # We'll use this to convert the name of the items given in the EDDN messages into the names TD uses.
+    # We'll use this to get the fdev_id from the 'symbol', AKA commodity['name'].lower()
     db_name = dict()
     edmc_source = 'https://raw.githubusercontent.com/Marginal/EDMarketConnector/master/commodity.csv'
     edmc_csv = request.urlopen(edmc_source)
     edmc_dict = csv.DictReader(codecs.iterdecode(edmc_csv, 'utf-8'))
     for line in iter(edmc_dict):
-        db_name[line['symbol'].lower()] = line['name']
-    # A few of these don't match between EDMC and EDDB, so we fix them individually.
-    db_name['airelics'] = 'Ai Relics'
-    db_name['drones'] = 'Limpet'
-    db_name['liquidoxygen'] = 'Liquid Oxygen'
-    db_name['coolinghoses'] = 'Micro-Weave Cooling Hoses'
-    db_name['nonlethalweapons'] = 'Non-lethal Weapons'
-    db_name['sap8corecontainer'] = 'Sap 8 Core Container'
-    db_name['trinketsoffortune'] = 'Trinkets Of Hidden Fortune'
-    db_name['ancientkey'] = 'Ancient Key'
+        db_name[line['symbol'].lower()] = line['id']
     
-    # We'll use this to get the item_id from the item's name because it's faster than a database lookup.
+    # We'll use this to get the item_id from the fdev_id because it's faster than a database lookup.
     item_ids = dict()
     with open(str(dataPath / Path("Item.csv")), "r") as fh:
         items = csv.DictReader(fh, quotechar="'")
+        # Older versions of TD don't have fdev_id as a unique key, newer versions do.
+        if 'fdev_id' in next(iter(items)).keys():
+            iid_key = 'fdev_id'
+        else:
+            iid_key = 'unq:fdev_id'
+        fh.seek(0)
+        next(iter(items))
         for item in items:
-            item_ids[item['name']] =  int(item['unq:item_id'])
+            item_ids[item[iid_key]] =  int(item['unq:item_id'])
+        print(item_ids)
+        Print
     
     # We're using these for the same reason. 
     system_names = dict()
