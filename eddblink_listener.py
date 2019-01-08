@@ -855,7 +855,7 @@ def update_dicts():
         fh.seek(0)
         next(iter(items))
         for item in items:
-            item_ids[item[iid_key]] =  int(item['item_id'])
+            item_ids[item[iid_key]] =  int(item['unq:item_id'])
     
     # We're using these for the same reason. 
     system_names = dict()
