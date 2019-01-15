@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 
 from __future__ import generators
+import sys
 import json
 import time
 import zlib
-import zmq
 import threading
-import trade
-import tradedb
-import tradeenv
-import transfers
+
 import datetime
 import sqlite3
 import csv
 import codecs
-import plugins.eddblink_plug
-import sys
-
 from urllib import request
 from calendar import timegm
 from pathlib import Path
 from collections import defaultdict, namedtuple, deque, OrderedDict
 from distutils.version import LooseVersion
+
+import zmq
+
+from tradedangerous import cli, tradedb, tradeenv, transfers
+from tradedangerous import plugins
+
 
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
 #
@@ -366,7 +366,7 @@ def check_update():
             options = config['plugin_options']
             if config['side'] == "server":
                 options += ",fallback"
-            trade.main(('trade.py','import','-P','eddblink','-O',options))
+            cli.trade(('trade.py','import','-P','eddblink','-O',options))
             
             # Since there's been an update, we need to redo all this.
             del db_name, item_ids, system_ids, station_ids
@@ -911,7 +911,7 @@ if firstRun:
     # EDDBlink plugin has not made the changes, time to fix that.
     print("EDDBlink plugin has not been run at least once, running now.")
     print("command: 'python trade.py import -P eddblink -O clean,skipvend'")
-    trade.main(('trade.py','import','-P','eddblink','-O','clean,skipvend'))
+    cli.trade(('trade.py','import','-P','eddblink','-O','clean,skipvend'))
     print("Finished running EDDBlink plugin, no need to run again.")
 
 else:
@@ -919,7 +919,7 @@ else:
     options = 'solo'
     if config['side'] == 'server':
         options += ',fallback'
-    trade.main(('trade.py','import','-P','eddblink','-O',options))
+    cli.trade(('trade.py','import','-P','eddblink','-O',options))
     # Check to see if plugin updated database.
     with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
         tmpFile = fh.read()

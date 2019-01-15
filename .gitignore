@@ -38,3 +38,5 @@ tradeenv.py
 tradeexcept.py
 transfers.py
 /tradedangerouscrest.ico
+
+venv/
