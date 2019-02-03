@@ -40,3 +40,5 @@ transfers.py
 /tradedangerouscrest.ico
 
 venv/
+.vscode/
+*.egg*
