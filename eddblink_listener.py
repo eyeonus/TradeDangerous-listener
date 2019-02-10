@@ -6,17 +6,22 @@ import time
 import zlib
 import zmq
 import threading
-import trade
-import tradedb
-import tradeenv
-import transfers
 import datetime
 import sqlite3
 import csv
 import codecs
-import plugins.eddblink_plug
 import sys
 
+try:
+    import trade
+    import tradedb
+    import tradeenv
+    import transfers
+    import plugins.eddblink_plug
+except:
+    from tradedangerous import cli as trade, tradedb, tradeenv, transfers, plugins
+    from tradedangerous.plugins import eddblink_plug
+    
 from urllib import request
 from calendar import timegm
 from pathlib import Path
