@@ -503,7 +503,7 @@ def validate_config():
         for option in options:
             if option in ['item', 'system', 'station', 'ship', 'shipvend', \
                           'upgrade', 'upvend', 'listings', 'all', 'clean', \
-                          'skipvend', 'force', 'fallback', 'progbar', 'solo']:
+                          'skipvend', 'force', 'fallback', 'solo']:
                 if valid_options != "":
                     valid_options += ","
                 valid_options += option
@@ -844,10 +844,17 @@ def export_listings():
 def update_dicts():
     # We'll use this to get the fdev_id from the 'symbol', AKA commodity['name'].lower()
     db_name = dict()
-    edmc_source = 'https://raw.githubusercontent.com/Marginal/EDMarketConnector/master/commodity.csv'
-    edmc_csv = request.urlopen(edmc_source)
-    edmc_dict = csv.DictReader(codecs.iterdecode(edmc_csv, 'utf-8'))
-    for line in iter(edmc_dict):
+    edcd_source = 'https://raw.githubusercontent.com/EDCD/FDevIDs/master/commodity.csv'
+    edcd_csv = request.urlopen(edcd_source)
+    edcd_dict = csv.DictReader(codecs.iterdecode(edcd_csv, 'utf-8'))
+    for line in iter(edcd_dict):
+        db_name[line['symbol'].lower()] = line['id']
+    
+    # Rare items are in a different file.
+    edcd_rare_source = 'https://raw.githubusercontent.com/EDCD/FDevIDs/master/rare_commodity.csv'
+    edcd_rare_csv = request.urlopen(edcd_rare_source)
+    edcd_rare_dict = csv.DictReader(codecs.iterdecode(edcd_rare_csv, 'utf-8'))
+    for line in iter(edcd_rare_dict):
         db_name[line['symbol'].lower()] = line['id']
     
     # We'll use this to get the item_id from the fdev_id because it's faster than a database lookup.
