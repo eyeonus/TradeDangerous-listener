@@ -388,7 +388,7 @@ def check_update():
                 time.sleep(1)
         
         del localModded, dumpModded, now, dDL, dTL, dumpDT
-                
+
 
 def load_config():
     """
@@ -721,7 +721,7 @@ def fetchIter(cursor, arraysize = 1000):
             break
         for result in results:
             yield result
-            
+
 
 def export_listings():
     """
