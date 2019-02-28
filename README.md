@@ -8,7 +8,7 @@ Python version 3.7+ recommended.
 
 - This program will automatically run the EDDBlink plugin, so there's no /need/ for you to ever do it yourself.
 
-- At this point in time, this program must be in the same folder as TD's "trade.py".
+- If TD was not installed via pip, this program must be in the same folder as TD's "trade.py". IF TD was installed via pip, this file can be anywhere desired.
 
 - EDDN is a 0MQ network, so this program uses the 'zmq' module. You may need to install zmq before this will run by running 'pip install pyzmq' in a Command Prompt / Terminal.
 
