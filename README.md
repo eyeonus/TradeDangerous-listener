@@ -1,5 +1,5 @@
 # EDDBlink-listener
-An EDDN listener, designed to work in conjunction with the EDDBlink plugin ( https://github.com/eyeonus/EDDBlink ) for Trade Dangerous, and of course, TD itself ( https://bitbucket.org/bgol/tradedangerous/downloads/ ).
+An EDDN listener, designed to work in conjunction with Trade Dangerous (https://github.com/eyeonus/Trade-Dangerous).
 
 Python version 3.7+ recommended.
 
