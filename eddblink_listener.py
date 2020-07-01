@@ -19,7 +19,7 @@ try:
     import transfers
     import plugins.eddblink_plug
 except:
-    from tradedangerous import cli as trade, tradedb, tradeenv, transfers, plugins
+    from tradedangerous import cli as trade, tradedb, tradeenv, transfers, plugins, commands
     from tradedangerous.plugins import eddblink_plug
 
 from urllib import request
@@ -500,15 +500,17 @@ def validate_config():
     if isinstance(config['plugin_options'], str):
         options = config['plugin_options'].split(',')
         valid_options = ""
+        cmdenv = commands.CommandIndex().parse
+        plugin_options = plugins.load(cmdenv(['trade', 'import', '--plug', 'eddblink', '-O', 'help']).plug, "ImportPlugin").pluginOptions.keys()
+       
         for option in options:
-            if option in ['item', 'system', 'station', 'ship', 'shipvend', \
-                          'upgrade', 'upvend', 'listings', 'all', 'clean', \
-                          'skipvend', 'force', 'fallback', 'solo']:
+            if option in plugin_options:
                 if valid_options != "":
                     valid_options += ","
                 valid_options += option
             else:
                 valid = False
+        Print
         if not valid:
             if valid_options.find("force") == -1:
                 valid_options = "force," + valid_options 
