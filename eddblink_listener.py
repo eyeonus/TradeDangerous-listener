@@ -889,7 +889,7 @@ def update_dicts():
             # have the following data in their entry in stations.jsonl:
             # "type_id":19,"type":"Megaship"
             # Except for that one Orbis station.
-            if int(station['type_id']) == 19 or int(station['unq:station_id']) == 42041:
+            if int(station['type_id']) == 19 or int(station['type_id']) == 24 or int(station['unq:station_id']) == 42041:
                 full_name = "MEGASHIP"
             else:
                 full_name = system_names[int(station['system_id@System.system_id'])]
