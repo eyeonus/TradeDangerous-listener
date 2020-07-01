@@ -585,7 +585,12 @@ def process_messages():
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"
     )
     avgStmt = "UPDATE Item SET avg_price = ? WHERE item_id = ?"
-    
+    sysStmt = (
+        "INSERT INTO System"
+        "( system_id,name,pos_x,pos_y,pos_z,modified ) VALUES"
+        "( ?, ?, ?, ?, ?, ? ) "
+        )
+
     while go:
         # We don't want the threads interfering with each other,
         # so pause this one if either the update checker or
@@ -621,12 +626,25 @@ def process_messages():
             # Mobile stations are stored in the dict a bit differently.
             station_id = station_ids.get("MEGASHIP/" + station)
             system_id = system_ids.get(system)
+            if not system_id:
+                print("\nSystem not found, adding with default values.")
+                success = False
+                while not success:
+                    try:
+                        curs.execute("BEGIN IMMEDIATE")
+                        self.execute(sysStmt, (system_id, system, 0, 0, 0, modified))
+                        conn.commit()
+                    except sqlite3.OperationalError:
+                        print("Database is locked, waiting for access.", end = "\n")
+                        time.sleep(1)
+            
             if station_id and system_id:
                 print("Megaship station, updating system.", end = " ")
                 # Update the system the station is in, in case it has changed.
                 success = False
                 while not success:
                     try:
+                        print(system_id, end='\r')
                         curs.execute("BEGIN IMMEDIATE")
                         curs.execute(updStmt, (system_id, station_id))
                         conn.commit()
@@ -889,6 +907,7 @@ def update_dicts():
             # have the following data in their entry in stations.jsonl:
             # "type_id":19,"type":"Megaship"
             # Except for that one Orbis station.
+            # And now Fleet Carriers, they're type 24.
             if int(station['type_id']) == 19 or int(station['type_id']) == 24 or int(station['unq:station_id']) == 42041:
                 full_name = "MEGASHIP"
             else:
