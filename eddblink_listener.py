@@ -510,7 +510,7 @@ def validate_config():
                 valid_options += option
             else:
                 valid = False
-        Print
+        
         if not valid:
             if valid_options.find("force") == -1:
                 valid_options = "force," + valid_options 
