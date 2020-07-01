@@ -585,11 +585,6 @@ def process_messages():
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"
     )
     avgStmt = "UPDATE Item SET avg_price = ? WHERE item_id = ?"
-    sysStmt = (
-        "INSERT OR IGNORE INTO System"
-        "( system_id,name,pos_x,pos_y,pos_z,modified ) VALUES"
-        "( ?, ?, ?, ?, ?, ? ) "
-        )
 
     while go:
         # We don't want the threads interfering with each other,
@@ -626,21 +621,7 @@ def process_messages():
             # Mobile stations are stored in the dict a bit differently.
             station_id = station_ids.get("MEGASHIP/" + station)
             system_id = system_ids.get(system)
-            if not system_id:
-                system_id = 0
-                print("System not found, adding with default values: " + system)
-                success = False
-                while not success:
-                    try:
-                        curs.execute("BEGIN IMMEDIATE")
-                        curs.execute(sysStmt, (0, system, 0, 0, 0, modified))
-                        conn.commit()
-                        success = True
-                    except sqlite3.OperationalError:
-                        print("Database is locked, waiting for access.", end = "\n")
-                        time.sleep(1)
-            
-            elif station_id and system_id:
+            if station_id and system_id:
                 print("Megaship station, updating system.", end = " ")
                 # Update the system the station is in, in case it has changed.
                 success = False
@@ -651,6 +632,10 @@ def process_messages():
                         curs.execute(updStmt, (system_id, station_id))
                         conn.commit()
                         success = True
+                    except sqlite3.IntegrityError:
+                        if config['verbose']:
+                            print("ERROR: Not found in Systems: " + system + "/" + station)
+                        continue
                     except sqlite3.OperationalError:
                         print("Database is locked, waiting for access.", end = "\n")
                         time.sleep(1)
