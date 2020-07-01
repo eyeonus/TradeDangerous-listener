@@ -640,7 +640,7 @@ def process_messages():
                         print("Database is locked, waiting for access.", end = "\n")
                         time.sleep(1)
             
-            if station_id and system_id:
+            elif station_id and system_id:
                 print("Megaship station, updating system.", end = " ")
                 # Update the system the station is in, in case it has changed.
                 success = False
