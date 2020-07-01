@@ -628,7 +628,7 @@ def process_messages():
             system_id = system_ids.get(system)
             if not system_id:
                 system_id = 0
-                print("\nSystem not found, adding with default values.")
+                print("System not found, adding with default values.")
                 success = False
                 while not success:
                     try:
