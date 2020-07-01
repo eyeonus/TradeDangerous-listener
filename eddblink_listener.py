@@ -586,7 +586,7 @@ def process_messages():
     )
     avgStmt = "UPDATE Item SET avg_price = ? WHERE item_id = ?"
     sysStmt = (
-        "INSERT INTO System"
+        "INSERT OR IGNORE INTO System"
         "( system_id,name,pos_x,pos_y,pos_z,modified ) VALUES"
         "( ?, ?, ?, ?, ?, ? ) "
         )
@@ -627,13 +627,15 @@ def process_messages():
             station_id = station_ids.get("MEGASHIP/" + station)
             system_id = system_ids.get(system)
             if not system_id:
+                system_id = 0
                 print("\nSystem not found, adding with default values.")
                 success = False
                 while not success:
                     try:
                         curs.execute("BEGIN IMMEDIATE")
-                        curs.execute(sysStmt, (system_id, system, 0, 0, 0, modified))
+                        curs.execute(sysStmt, (0, system, 0, 0, 0, modified))
                         conn.commit()
+                        success = True
                     except sqlite3.OperationalError:
                         print("Database is locked, waiting for access.", end = "\n")
                         time.sleep(1)
