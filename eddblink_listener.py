@@ -632,7 +632,7 @@ def process_messages():
                 while not success:
                     try:
                         curs.execute("BEGIN IMMEDIATE")
-                        self.execute(sysStmt, (system_id, system, 0, 0, 0, modified))
+                        curs.execute(sysStmt, (system_id, system, 0, 0, 0, modified))
                         conn.commit()
                     except sqlite3.OperationalError:
                         print("Database is locked, waiting for access.", end = "\n")
