@@ -662,7 +662,7 @@ def process_messages():
             item_edid = db_name.get(commodity['name'].lower())
             if not item_edid:
                 if config['verbose']:
-                    print("Ignoring rare item: " + commodity['name'])
+                    print("Ignoring item: " + commodity['name'])
                 continue
             # Some items, mostly recently added items, are found in db_name but not in item_ids
             # (This is entirely EDDB.io's fault.)
@@ -866,6 +866,11 @@ def update_dicts():
     
     # We'll use this to get the item_id from the fdev_id because it's faster than a database lookup.
     item_ids = dict()
+
+    # Rare items don't have an EDDB item_id, so we'll just store them by the fdev_id
+    for line in iter(edcd_rare_dict):
+        item_ids[line['id']] = line['id']
+    
     with open(str(dataPath / Path("Item.csv")), "r") as fh:
         items = csv.DictReader(fh, quotechar = "'")
         # Older versions of TD don't have fdev_id as a unique key, newer versions do.
