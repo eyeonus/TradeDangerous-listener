@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from __future__ import generators
+import os
 import json
 import time
 import zlib
@@ -797,10 +798,15 @@ def export_listings():
                     break
             print("Busy signal acknowledged, getting listings for export.")
             try:
-                results = list(fetchIter(db_execute(db, "SELECT * FROM StationItem WHERE from_live = 1 ORDER BY station_id, item_id")))
+                cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem WHERE from_live = 1 ORDER BY station_id, item_id"))
+                results = list(cursor)
             except sqlite3.DatabaseError as e:
                 print(e)
                 export_busy = False
+                continue
+            except AttributeError as e:
+                print("Got Attribute error trying to fetch StationItems: " + e)
+                print(cursor)
                 continue
             export_busy = False
             
@@ -959,7 +965,7 @@ process_ack = False
 export_ack = False
 export_busy = False
 
-dataPath = Path(tradeenv.TradeEnv().dataDir).resolve()
+dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().dataDir).resolve()
 eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
 debugPath = eddbPath / Path("debug.txt")
 
