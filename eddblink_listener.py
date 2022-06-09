@@ -826,7 +826,7 @@ def export_listings():
                     buy_price = str(result[5])
                     supply = str(result[6])
                     supply_bracket = str(result[7])
-                    collected_at = str(timegm(datetime.datetime.strptime(result[8], '%Y-%m-%d %H:%M:%S').timetuple()))
+                    collected_at = str(timegm(datetime.datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
                     listing = station_id + "," + commodity_id + "," \
                              +supply + "," + supply_bracket + "," + buy_price + "," \
                              +sell_price + "," + demand + "," + demand_bracket + "," \
