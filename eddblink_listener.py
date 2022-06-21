@@ -215,15 +215,13 @@ class Listener(object):
                     # Upload software not on whitelist is ignored.
                     if len(whitelist_match) == 0:
                         if config['debug']:
-                            with debugPath.open('a', encoding = "utf-8") as fh:
-                                fh.write(system + "/" + station + " rejected with:" + software + swVersion + "\n")
+                            print(system + "/" + station + " rejected with:" + software + swVersion + "\n")
                         continue
                     # Upload software with version less than the defined minimum is ignored. 
                     if whitelist_match[0].get("minversion"):
                         if LooseVersion(swVersion) < LooseVersion(whitelist_match[0].get("minversion")):
                             if config['debug']:
-                                with debugPath.open('a', encoding = "utf-8") as fh:
-                                    fh.write(system + "/" + station + " rejected with:" + software + swVersion + "\n")
+                                print(system + "/" + station + " rejected with:" + software + swVersion + "\n")
                             continue
                     # We've received real data.
                     
@@ -666,8 +664,7 @@ def process_messages():
         
         start_update = datetime.datetime.now()
         if config['debug']:
-            with debugPath.open('a', encoding = "utf-8") as fh:
-                fh.write(system + "/" + station + " with station_id '" + str(station_id) + "' updated at " + modified + " using " + software + swVersion + " ---\n")
+            print(system + "/" + station + " with station_id '" + str(station_id) + "' updated at " + modified + " using " + software + swVersion + " ---\n")
         
         itemList = []
         avgList = []
@@ -714,8 +711,7 @@ def process_messages():
             curs.executemany(avgStmt, avgList)
         except Exception as e:
             if config['debug']:
-                with debugPath.open('a', encoding = "utf-8") as fh:
-                    fh.write("Error '" + str(e) + "' when inserting message:\n" + str(itemList))
+                print("Error '" + str(e) + "' when inserting message:\n" + str(itemList))
         success = False
         while not success:
             try:
@@ -983,7 +979,6 @@ export_busy = False
 
 dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().dataDir).resolve()
 eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
-debugPath = eddbPath / Path("debug.txt")
 
 db_name, item_ids, system_ids, station_ids = update_dicts()
 
