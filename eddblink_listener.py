@@ -230,6 +230,10 @@ class Listener(object):
                     # Normalize timestamps
                     timestamp = timestamp.replace("T", " ").replace("+00:00", "")
                     
+                    #Find the culprit!
+                    if '.' in timestamp and config['debug']:
+                        print("Client " + software + ", version " + swVersion + ", uses microseconds.")
+                    
                     # We'll get either an empty list or a list containing
                     # a MarketPrice. This saves us having to do the expensive
                     # index operation twice.
@@ -316,79 +320,91 @@ def check_update():
         if s > 1:
             next_check += "s"
     
+    now = round(time.time(), 0)
+    dumpModded = 0
+    localModded = 0
+    
     # The following values only need to be assigned once, no need to be in the while loop.
     BASE_URL = plugins.eddblink_plug.BASE_URL
     FALLBACK_URL = plugins.eddblink_plug.FALLBACK_URL
     LISTINGS = "listings.csv"
     listings_path = Path(LISTINGS)
     Months = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6, 'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
-    
-    while go:
-        now = time.time()
-        
-        dumpModded = 0
-        localModded = 0
-        
-        # We want to get the files from Tromador's mirror, but if it's down we'll go to EDDB.io directly, instead.         
-        if config['side'] == 'client':
-            try:
-                request.urlopen(BASE_URL + LISTINGS)
-                url = BASE_URL + LISTINGS
-            except:
-                url = FALLBACK_URL + LISTINGS
-        else:
+
+    # We want to get the files from Tromador's mirror, but if it's down we'll go to EDDB.io directly, instead.         
+    if config['side'] == 'client':
+        try:
+            request.urlopen(BASE_URL + LISTINGS)
+            url = BASE_URL + LISTINGS
+        except:
             url = FALLBACK_URL + LISTINGS
+    else:
+        url = FALLBACK_URL + LISTINGS
         
-        # Need to parse the "Last-Modified" header into a Unix-epoch, and Python's strptime()
-        # won't work because it is locale-dependent, meaning it would only work in English-
-        # speaking countries.
-        dDL = request.urlopen(url).getheader("Last-Modified").split(' ')
-        dTL = dDL[4].split(':')
-        
-        dumpDT = datetime.datetime(int(dDL[3]), Months[dDL[2]], int(dDL[1]), \
-            hour = int(dTL[0]), minute = int(dTL[1]), second = int(dTL[2]), \
-            tzinfo = datetime.timezone.utc)
-        dumpModded = timegm(dumpDT.timetuple())
-        
-        # Now that we have the Unix epoch time of the dump file, get the same from the local file.
-        if Path.exists(eddbPath / listings_path):
-            localModded = (eddbPath / listings_path).stat().st_mtime
-        
+    while go:
         # Trigger daily EDDB update if the dumps have updated since last run.
-        # Otherwise, go to sleep for an hour before checking again.
-        if localModded < dumpModded:
-            # TD will fail with an error if the database is in use while it's trying
-            # to do its thing, so we need to make sure that neither of the database
-            # editing methods are doing anything before running.
-            update_busy = True
-            print("EDDB update available, waiting for busy signal acknowledgement before proceeding.")
-            while not (process_ack and export_ack):
-                if config['debug']:
-                    print("Still waiting for acknowledgment.")
-                time.sleep(1)
-            print("Busy signal acknowledged, performing EDDB dump update.")
-            options = config['plugin_options']
-            if config['side'] == "server":
-                options += ",fallback"
-            trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', options))
+        # Otherwise, go to sleep for {config['check_update_every_x_sec']} seconds before checking again.
+        if time.time() >= now + config['check_update_every_x_sec']:
             
-            # Since there's been an update, we need to redo all this.
-            del db_name, item_ids, system_ids, station_ids
-            db_name, item_ids, system_ids, station_ids = update_dicts()
+            # Need to parse the "Last-Modified" header into a Unix-epoch, and Python's strptime()
+            # won't work because it is locale-dependent, meaning it would only work in English-
+            # speaking countries.
+            dDL = request.urlopen(url).getheader("Last-Modified").split(' ')
+            dTL = dDL[4].split(':')
             
-            print("Update complete, turning off busy signal.")
-            update_busy = False
-        else:
-            print("No update, checking again in " + next_check + ".")
-            while time.time() < now + config['check_update_every_x_sec']:
-                if config['debug']:
-                    print("Update checker is sleeping: " + str(now + config['check_update_every_x_sec'] - time.time()) + " seconds remain until next check.")
-                if not go:
-                    print("Shutting down update checker.")
-                    break
-                time.sleep(1)
+            dumpDT = datetime.datetime(int(dDL[3]), Months[dDL[2]], int(dDL[1]), \
+                                       hour = int(dTL[0]), minute = int(dTL[1]), second = int(dTL[2]), \
+                                       tzinfo = datetime.timezone.utc)
+            dumpModded = timegm(dumpDT.timetuple())
+            
+            # Now that we have the Unix epoch time of the dump file, get the same from the local file.
+            if Path.exists(eddbPath / listings_path):
+                localModded = (eddbPath / listings_path).stat().st_mtime
+            
+            if localModded < dumpModded:
+                # TD will fail with an error if the database is in use while it's trying
+                # to do its thing, so we need to make sure that neither of the database
+                # editing methods are doing anything before running.
+                update_busy = True
+                print("EDDB update available, waiting for busy signal acknowledgement before proceeding.")
+                while not (process_ack and export_ack):
+                    rep = 0
+                    if config['debug']:
+                        print("Still waiting for acknowledgment. (" + str(rep) + ")", end = '\r')
+                        rep = rep + 1
+                    time.sleep(1)
+                print("Busy signal acknowledged, performing EDDB dump update.")
+                options = config['plugin_options']
+                if config['side'] == "server" and not ("fallback" in options):
+                    options += ",fallback"
+                try:
+                    trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', options))
+                except Exception as e:
+                    print("Error when running update:")
+                    print(e)
+                
+                # Since there's been an update, we need to redo all this.
+                del db_name, item_ids, system_ids, station_ids, now, localModded, dumpModded, now, dDL, dTL, dumpDT
+                
+                db_name, item_ids, system_ids, station_ids = update_dicts()
+
+                now = round(time.time(), 0)
+                dumpModded = 0
+                localModded = 0
+            
+                print("Update complete, turning off busy signal.")
+                update_busy = False
+            else:
+                print("No update, checking again in " + next_check + ".")
         
-        del localModded, dumpModded, now, dDL, dTL, dumpDT
+        #If time.time() < now + config['check_update_every_x_sec']:
+        if config['debug'] and ((round(time.time(), 0) - now) % 60 == 0):
+            print("Update checker is sleeping: " + str(int(now + config['check_update_every_x_sec'] - round(time.time(), 0))) + " seconds remain until next check.")
+        time.sleep(1)
+    
+    #If not go:
+    print("Shutting down update checker.")
+
 
 
 def load_config():
