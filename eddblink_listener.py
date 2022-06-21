@@ -262,8 +262,8 @@ class Listener(object):
                 
                 for entry in batch.values():
                     queue.append(entry[0])
-        print("Shutting down listener.")
         self.disconnect()
+        print("Listener reporting shutdown.")
 
 # End of 'kfsone' code.
 
@@ -403,7 +403,7 @@ def check_update():
         time.sleep(1)
     
     #If not go:
-    print("Shutting down update checker.")
+    print("Update checker reporting shutdown.")
 
 
 
@@ -731,7 +731,7 @@ def process_messages():
         else:
             print("Updated " + system + "/" + station)
     
-    print("Shutting down message processor.")
+    print("Message processor reporting shutdown.")
 
 
 def fetchIter(cursor, arraysize = 1000):
@@ -864,7 +864,7 @@ def export_listings():
             listings_tmp.rename(listings_file)
             print("Export completed in " + str(datetime.datetime.now() - start))
         
-        print("Shutting down listings exporter.")
+        print("Listings exporter reporting shutdown.")
     
     else:
         export_ack = True
