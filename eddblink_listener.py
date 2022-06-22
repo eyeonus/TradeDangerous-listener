@@ -663,8 +663,6 @@ def process_messages():
         commodities = entry.commodities
         
         start_update = datetime.datetime.now()
-        if config['debug']:
-            print("Processing update from "+ software + " v" + swVersion + " for " + system + "/" + station + ": station_id '" + str(station_id) + "'")
         
         itemList = []
         avgList = []
@@ -730,8 +728,7 @@ def process_messages():
                 time.sleep(1)
         
         if config['verbose']:
-            print("Market update for " + system + "/" + station \
-                  +" finished in " + str(int((datetime.datetime.now() - start_update).total_seconds() * 1000) / 1000) + " seconds.")
+            print("Updated " + system + "/" + station + ", station_id:'" + str(station_id) + "', from "+ software + " v" + swVersion)
         else:
             print("Updated " + system + "/" + station)
     
