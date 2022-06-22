@@ -215,7 +215,7 @@ class Listener(object):
                     # Upload software not on whitelist is ignored.
                     if len(whitelist_match) == 0:
                         if config['debug'] or config['verbose']:
-                            print(system + "/" + station + " updated rejected from client not on whitelist: " + software + " v" + swVersion + "\n")
+                            print(system + "/" + station + " update rejected from client not on whitelist: " + software + " v" + swVersion + "\n")
                         continue
                     # Upload software with version less than the defined minimum is ignored. 
                     if whitelist_match[0].get("minversion"):
