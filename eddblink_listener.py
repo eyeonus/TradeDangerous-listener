@@ -392,10 +392,7 @@ def check_update():
             else:
                 print("No update, checking again in " + next_check + ".")
             
-            
             now = round(time.time(), 0)
-            dumpModded = 0
-            localModded = 0
         
         #If time.time() < now + config['check_update_every_x_sec']:
         if config['debug'] and ((round(time.time(), 0) - now) % 60 == 0):
@@ -619,12 +616,12 @@ def process_messages():
             station_id = station_ids.get("MEGASHIP/" + station)
             system_id = system_ids.get(system)
             if station_id and system_id:
-                print("Megaship station, updating system.", end = " ")
+                if config['verbose']:
+                    print("Megaship station, updating system to " + system)
                 # Update the system the station is in, in case it has changed.
                 success = False
                 while not success:
                     try:
-                        print(system_id, end='\r')
                         curs.execute("BEGIN IMMEDIATE")
                         curs.execute(updStmt, (system_id, station_id))
                         conn.commit()
