@@ -214,8 +214,8 @@ class Listener(object):
                     whitelist_match = list(filter(lambda x: x.get('software').lower() == software.lower(), config['whitelist']))
                     # Upload software not on whitelist is ignored.
                     if len(whitelist_match) == 0:
-                        if config['debug']:
-                            print(system + "/" + station + " rejected with:" + software + " v" + swVersion + "\n")
+                        if config['debug'] or config['verbose']:
+                            print(system + "/" + station + " updated rejected from client not on whitelist: " + software + " v" + swVersion + "\n")
                         continue
                     # Upload software with version less than the defined minimum is ignored. 
                     if whitelist_match[0].get("minversion"):
