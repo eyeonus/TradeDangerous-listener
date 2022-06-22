@@ -386,14 +386,16 @@ def check_update():
                 
                 db_name, item_ids, system_ids, station_ids = update_dicts()
 
-                now = round(time.time(), 0)
-                dumpModded = 0
-                localModded = 0
             
                 print("Update complete, turning off busy signal.")
                 update_busy = False
             else:
                 print("No update, checking again in " + next_check + ".")
+            
+            
+            now = round(time.time(), 0)
+            dumpModded = 0
+            localModded = 0
         
         #If time.time() < now + config['check_update_every_x_sec']:
         if config['debug'] and ((round(time.time(), 0) - now) % 60 == 0):
