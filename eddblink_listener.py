@@ -664,7 +664,7 @@ def process_messages():
         
         start_update = datetime.datetime.now()
         if config['debug']:
-            print(system + "/" + station + " with station_id '" + str(station_id) + "' updated at " + modified + " using " + software + swVersion + " ---\n")
+            print("Processing update from "+ software + " v" + swVersion + " for " + system + "/" + station + ": station_id '" + str(station_id) + "'")
         
         itemList = []
         avgList = []
@@ -682,9 +682,7 @@ def process_messages():
             # (This is entirely EDDB.io's fault.)
             item_id = item_ids.get(item_edid)
             if not item_id:
-                if config['verbose']:
-                    print("EDDB.io's API does not include likely recently added item: '" + commodity['name'] + "', using fdev_id as placeholder, please inform the current EDDB.io maintainer.")
-                item_id = item_edid
+                item_id = int(item_edid)
             
             itemList.append((
                 station_id, item_id, modified,
@@ -705,13 +703,23 @@ def process_messages():
             except sqlite3.OperationalError:
                 print("Database is locked, waiting for access.", end = "\n")
                 time.sleep(1)
+        
         curs.execute(delStmt, (station_id,))
-        try:
-            curs.executemany(insStmt, itemList)
-            curs.executemany(avgStmt, avgList)
-        except Exception as e:
-            if config['debug']:
-                print("Error '" + str(e) + "' when inserting message:\n" + str(itemList))
+        
+        for item in itemList:
+            try:
+                curs.execute(insStmt, item)
+            except Exception as e:
+                if config['debug']:
+                    print("Error '" + str(e) + "' when inserting item:\n\t(Not in DB's Item table?) fdev_id: " + str(item[1]))
+        
+        for avg in avgList:
+            try:
+                curs.execute(avgStmt, avg)
+            except Exception as e:
+                if config['debug']:
+                    print("Error '" + str(e) + "' when inserting average:\n" + str(avg))
+        
         success = False
         while not success:
             try:
