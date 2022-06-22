@@ -382,7 +382,7 @@ def check_update():
                     print(e)
                 
                 # Since there's been an update, we need to redo all this.
-                del db_name, item_ids, system_ids, station_ids, now, localModded, dumpModded, now, dDL, dTL, dumpDT
+                del db_name, item_ids, system_ids, station_ids, now, localModded, dumpModded, dDL, dTL, dumpDT
                 
                 db_name, item_ids, system_ids, station_ids = update_dicts()
 
