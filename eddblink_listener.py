@@ -215,7 +215,7 @@ class Listener(object):
                     # Upload software not on whitelist is ignored.
                     if len(whitelist_match) == 0:
                         if config['debug']:
-                            print(system + "/" + station + " rejected with:" + software + swVersion + "\n")
+                            print(system + "/" + station + " rejected with:" + software + " v" + swVersion + "\n")
                         continue
                     # Upload software with version less than the defined minimum is ignored. 
                     if whitelist_match[0].get("minversion"):
@@ -417,32 +417,24 @@ def load_config():
     write_config = False
     # Initialize config with default settings.
     # NOTE: Whitespace added for readability.
-    #
-    # eddi has been sending bad data
-    # removed from whitelist until fixed    
-    # [eye EDIT:] 
-    # Removing it from here only keeps it from being written by default,
-    # it doesn't remove it from existing configs.
-    # That needs to be done in the validate method.
-    config = OrderedDict([\
-                            ('side', 'client'), \
-                            ('verbose', True), \
-                            ('debug', False), \
-                            ('plugin_options', "all,skipvend,force"), \
-                            ('check_update_every_x_sec', 3600), \
-                            ('export_every_x_sec', 300), \
-                            ('server_maint_every_x_hour', 12), \
-                            ('export_path', './data/eddb'), \
-                            ('whitelist', \
-                                [                                                                    \
-                                    OrderedDict([ ('software', 'E:D Market Connector [Windows]') ]), \
-                                    OrderedDict([ ('software', 'E:D Market Connector [Mac OS]')  ]), \
-                                    OrderedDict([ ('software', 'E:D Market Connector [Linux]')   ]), \
-#                                    OrderedDict([ ('software', 'eddi'), ('minversion', '2.2')    ]),  \
+    config = OrderedDict([                                                                          \
+                            ('side', 'client'),                                                     \
+                            ('verbose', True),                                                      \
+                            ('debug', False),                                                       \
+                            ('plugin_options', "all,skipvend,force"),                               \
+                            ('check_update_every_x_sec', 3600),                                     \
+                            ('export_every_x_sec', 300),                                            \
+                            ('server_maint_every_x_hour', 12),                                      \
+                            ('export_path', './data/eddb'),                                         \
+                            ('whitelist',                                                           \
+                                [                                                                   \
+                                    OrderedDict([ ('software', 'E:D Market Connector [Windows]') ]),\
+                                    OrderedDict([ ('software', 'E:D Market Connector [Mac OS]')  ]),\
+                                    OrderedDict([ ('software', 'E:D Market Connector [Linux]')   ]),\
                                     OrderedDict([ ('software', 'EDDiscovery')                    ]) \
-                                ]                                                                    \
-                            )                                                                        \
-               ])
+                                ]                                                                   \
+                            )                                                                       \
+                        ])
     
     # Load the settings from the configuration file if it exists.
     if Path.exists(Path("eddblink-listener-config.json")):
@@ -459,9 +451,6 @@ def load_config():
                     else:
                         # If any settings don't exist in the config_file, need to update the file.
                         write_config = True
-                if temp.get("check_delay_in_sec"):
-                    config["check_update_every_x_sec"] = temp["check_delay_in_sec"]
-                    write_config = True
             except:
                 # If, for some reason, there's an error trying to load
                 # the config_file, treat it as if it doesn't exist.
@@ -470,17 +459,14 @@ def load_config():
         # If the config_file doesn't exist, need to make it.
         write_config = True
     
-    # If the config_file doesn't exist, or if it is missing
-    # one or more settings (such as might happen in an upgrade),
-    # write the current configuration to the file.
+
+    # Write the current configuration to the file, if needed.
     if write_config:
         with open("eddblink-listener-config.json", "w") as config_file:
             json.dump(config, config_file, indent = 4)
     
-    # We now have a config that has valid values for all the settings,
-    # even if the setting was not found in the config_file, and the 
-    # config_file has been updated if necessary with all previously 
-    # missing settings set to default values.
+    # We now have a config that has valid values for all the settings, and a
+    # matching config_file so the settings are preserved for the next run.
     return config
 
 
@@ -555,7 +541,7 @@ def validate_config():
         config_file = config_file.replace('"export_every_x_sec"', '"export_every_x_sec_invalid"')
     
     if isinstance(config['server_maint_every_x_hour'], (int, float)):
-        if config['server_maint_every_x_hour'] < 1 or config['server_maint_every_x_hour'] > 24:
+        if config['server_maint_every_x_hour'] < 1 or config['server_maint_every_x_hour'] > 240:
             valid = False
             config_file = config_file.replace('"server_maint_every_x_hour"', '"server_maint_every_x_hour_invalid"')
     else:
@@ -565,12 +551,6 @@ def validate_config():
     if not Path.exists(Path(config['export_path'])):
         valid = False
         config_file = config_file.replace('"export_path"', '"export_path_invalid"')
-    
-    # Here, we get rid of 'eddi' in existing configs.
-    for entry in config['whitelist']:
-        if entry['software'].lower() == 'eddi':
-            config_file = config_file.replace(',\n        {\n            "software": "eddi",\n            "minversion": "2.2"\n        }', '')
-            valid = False
     
     if not valid:
         # Before we reload the config to set the invalid values back to default,
