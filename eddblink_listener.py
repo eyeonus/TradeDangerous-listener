@@ -231,6 +231,11 @@ class Listener(object):
                     #Find the culprit!
                     if '.' in timestamp and config['debug']:
                         print("Client " + software + ", version " + swVersion + ", uses microseconds.")
+                        print("Full message from the culprit:")
+                        for key in header:
+                            print(str(key) + ": " + str(header[key]))
+                        for key in message:
+                            print(str(key) + ": " + str(message[key]))
                     
                     # We'll get either an empty list or a list containing
                     # a MarketPrice. This saves us having to do the expensive
