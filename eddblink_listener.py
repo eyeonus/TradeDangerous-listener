@@ -899,7 +899,7 @@ def update_dicts():
             system_names[int(system['unq:system_id'])] = system['name'].upper()
             system_ids[system['name'].upper()] = int(system['unq:system_id'])
     station_ids = dict()
-    with open(str(dataPath / Path("Station.csv")), "r") as fh:
+    with open(str(dataPath / Path("Station.csv")), "r", encoding="utf8") as fh:
         stations = csv.DictReader(fh, quotechar = "'")
         for station in stations:
             # Mobile stations can move between systems. The mobile stations 
