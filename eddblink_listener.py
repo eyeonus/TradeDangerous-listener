@@ -878,7 +878,7 @@ def update_dicts():
     for line in iter(edcd_rare_dict):
         item_ids[line['id']] = line['id']
     
-    with open(str(dataPath / Path("Item.csv")), "r") as fh:
+    with open(str(dataPath / Path("Item.csv")), "r", encoding="utf8") as fh:
         items = csv.DictReader(fh, quotechar = "'")
         # Older versions of TD don't have fdev_id as a unique key, newer versions do.
         if 'fdev_id' in next(iter(items)).keys():
@@ -893,13 +893,13 @@ def update_dicts():
     # We're using these for the same reason. 
     system_names = dict()
     system_ids = dict()
-    with open(str(dataPath / Path("System.csv")), "r") as fh:
+    with open(str(dataPath / Path("System.csv")), "r", encoding="utf8") as fh:
         systems = csv.DictReader(fh, quotechar = "'")
         for system in systems:
             system_names[int(system['unq:system_id'])] = system['name'].upper()
             system_ids[system['name'].upper()] = int(system['unq:system_id'])
     station_ids = dict()
-    with open(str(dataPath / Path("Station.csv")), "r") as fh:
+    with open(str(dataPath / Path("Station.csv")), "r", encoding="utf8") as fh:
         stations = csv.DictReader(fh, quotechar = "'")
         for station in stations:
             # Mobile stations can move between systems. The mobile stations 
