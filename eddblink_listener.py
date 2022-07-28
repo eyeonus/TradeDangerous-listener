@@ -323,7 +323,7 @@ def check_update():
         if s > 1:
             next_check += "s"
     
-    now = round(time.time(), 0)
+    now = round(time.time(), 0) - config['check_update_every_x_sec']
     dumpModded = 0
     localModded = 0
     
@@ -348,6 +348,19 @@ def check_update():
         # Trigger daily EDDB update if the dumps have updated since last run.
         # Otherwise, go to sleep for {config['check_update_every_x_sec']} seconds before checking again.
         if time.time() >= now + config['check_update_every_x_sec']:
+            
+            response = 0
+            tryLeft = 10
+            while tryLeft != 0:
+                try:
+                    response = request.urlopen(url)
+                    tryLeft = 0
+                except:
+                    tryLeft -= 1
+            
+            if not response:
+                print("Error attempting to check for update, no response from server.")
+                continue
             
             # Need to parse the "Last-Modified" header into a Unix-epoch, and Python's strptime()
             # won't work because it is locale-dependent, meaning it would only work in English-
@@ -382,23 +395,22 @@ def check_update():
                     options += ",fallback"
                 try:
                     trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', options))
+                    
+                    # Since there's been an update, we need to redo all this.
+                    db_name, item_ids, system_ids, station_ids = update_dicts()
+                    
+                    print("Update complete, turning off busy signal.")
+                    update_busy = False
+                    now = round(time.time(), 0)
+                                
                 except Exception as e:
                     print("Error when running update:")
                     print(e)
                 
-                # Since there's been an update, we need to redo all this.
-                del db_name, item_ids, system_ids, station_ids, now, localModded, dumpModded, dDL, dTL, dumpDT
-                
-                db_name, item_ids, system_ids, station_ids = update_dicts()
-
-            
-                print("Update complete, turning off busy signal.")
-                update_busy = False
             else:
                 print("No update, checking again in " + next_check + ".")
+                now = round(time.time(), 0)
             
-            now = round(time.time(), 0)
-        
         #If time.time() < now + config['check_update_every_x_sec']:
         if config['debug'] and ((round(time.time(), 0) - now) % 60 == 0):
             print("Update checker is sleeping: " + str(int(now + config['check_update_every_x_sec'] - round(time.time(), 0))) + " seconds remain until next check.")
