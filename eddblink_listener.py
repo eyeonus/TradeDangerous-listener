@@ -299,55 +299,44 @@ def get_messages():
 
 
 def check_update():
+    """
+    Checks for updates on the server.
+    Only runs when program configured as client.
+    """
     global update_busy, db_name, item_ids, system_ids, station_ids
     
-    # Convert the number from the "check_update_every_x_sec" setting, which is in seconds,
-    # into easily readable hours, minutes, seconds.
-    m, s = divmod(config['check_update_every_x_sec'], 60)
-    h, m = divmod(m, 60)
+    # Convert the number from the "check_update_every_x_min" setting, which is in minutes,
+    # into easily readable hours and minutes.
+    h, m = divmod(config['check_update_every_x_min'], 60)
     next_check = ""
     if h > 0:
         next_check = str(h) + " hour"
         if h > 1:
             next_check += "s"
-        if m > 0 or s > 0:
+        if m > 0:
             next_check += ", "
     if m > 0:
         next_check += str(m) + " minute"
         if m > 1:
             next_check += "s"
-        if s > 0:
-            next_check += ", "                    
-    if s > 0:
-        next_check += str(s) + " second"
-        if s > 1:
-            next_check += "s"
     
-    now = round(time.time(), 0) - config['check_update_every_x_sec']
+    now = round(time.time(), 0) - config['check_update_every_x_min']
     dumpModded = 0
     localModded = 0
     
     # The following values only need to be assigned once, no need to be in the while loop.
     BASE_URL = plugins.eddblink_plug.BASE_URL
-    FALLBACK_URL = plugins.eddblink_plug.FALLBACK_URL
     LISTINGS = "listings.csv"
     listings_path = Path(LISTINGS)
     Months = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6, 'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
-
-    # We want to get the files from Tromador's mirror, but if it's down we'll go to EDDB.io directly, instead.         
-    if config['side'] == 'client':
-        try:
-            request.urlopen(BASE_URL + LISTINGS)
-            url = BASE_URL + LISTINGS
-        except:
-            url = FALLBACK_URL + LISTINGS
-    else:
-        url = FALLBACK_URL + LISTINGS
+    
+    request.urlopen(BASE_URL + LISTINGS)
+    url = BASE_URL + LISTINGS
         
     while go:
         # Trigger daily EDDB update if the dumps have updated since last run.
-        # Otherwise, go to sleep for {config['check_update_every_x_sec']} seconds before checking again.
-        if time.time() >= now + config['check_update_every_x_sec']:
+        # Otherwise, go to sleep for {config['check_update_every_x_min']} minutes before checking again.
+        if time.time() >= now + (config['check_update_every_x_min'] * 60):
             
             response = 0
             tryLeft = 10
@@ -383,16 +372,15 @@ def check_update():
                 # editing methods are doing anything before running.
                 update_busy = True
                 print("EDDB update available, waiting for busy signal acknowledgement before proceeding.")
-                while not (process_ack and export_ack):
+                while not (process_ack):
                     rep = 0
                     if config['debug']:
                         print("Still waiting for acknowledgment. (" + str(rep) + ")", end = '\r')
                         rep = rep + 1
                     time.sleep(1)
                 print("Busy signal acknowledged, performing EDDB dump update.")
+                process_ack = False
                 options = config['plugin_options']
-                if config['side'] == "server" and not ("fallback" in options):
-                    options += ",fallback"
                 try:
                     trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', options))
                     
@@ -411,9 +399,8 @@ def check_update():
                 print("No update, checking again in " + next_check + ".")
                 now = round(time.time(), 0)
             
-        #If time.time() < now + config['check_update_every_x_sec']:
         if config['debug'] and ((round(time.time(), 0) - now) % 60 == 0):
-            print("Update checker is sleeping: " + str(int(now + config['check_update_every_x_sec'] - round(time.time(), 0))) + " seconds remain until next check.")
+            print("Update checker is sleeping: " + str(int(now + (config['check_update_every_x_min'] * 60) - round(time.time(), 0))) + " minutes remain until next check.")
         time.sleep(1)
     
     #If not go:
@@ -438,9 +425,10 @@ def load_config():
                             ('verbose', True),                                                      \
                             ('debug', False),                                                       \
                             ('plugin_options', "all,skipvend,force"),                               \
-                            ('check_update_every_x_sec', 3600),                                     \
-                            ('export_every_x_sec', 300),                                            \
-                            ('server_maint_every_x_hour', 12),                                      \
+                            ('check_update_every_x_min', 60),                                       \
+                            ('export_live_every_x_min', 5),                                         \
+                            ('export_dump_every_x_hour', 24),                                       \
+                            ('db_maint_every_x_hour', 12),                                          \
                             ('export_path', './data/eddb'),                                         \
                             ('whitelist',                                                           \
                                 [                                                                   \
@@ -498,22 +486,27 @@ def validate_config():
         config_file = fh.read()
     
     # For each of these settings, if the value is invalid, mark the key.
+    
+    # 'side' == 'client' || 'server'
     config['side'] = config['side'].lower()
     if config['side'] != 'server' and config['side'] != 'client':
         valid = False
         config_file = config_file.replace('"side"', '"side_invalid"')
     
+    # 'verbose' == True || False
     if not isinstance(config["verbose"], bool):
         valid = False
         config_file = config_file.replace('"verbose"', '"verbose_invalid"')
     
+    # 'debug' == True || False
     if not isinstance(config["debug"], bool):
         valid = False
         config_file = config_file.replace('"debug"', '"debug_invalid"')
     
-    # For this one, rather than completely replace invalid values with the default,
-    # check to see if any of the values are valid, and keep them, prepending the
-    # default values to the setting if they aren't already in the setting.
+    # 'plugin_options': For this one, rather than completely replace invalid
+    # values with the default, check to see if any of the values are valid
+    # and keep those, prepending the default values to the setting if they
+    # aren't already in the setting.
     if isinstance(config['plugin_options'], str):
         options = config['plugin_options'].split(',')
         valid_options = ""
@@ -540,30 +533,44 @@ def validate_config():
         valid = False
         config_file = config_file.replace('"plugin_options"', '"plugin_options_invalid"')
     
-    if isinstance(config['check_update_every_x_sec'], int):
-        if config['check_update_every_x_sec'] < 1:
+    # 'check_update_every_x_min' >= 1 && <= 1440 (1 day)
+    if isinstance(config['check_update_every_x_min'], int):
+        if config['check_update_every_x_min'] < 1 or config['check_update_every_x_min'] > 1440:
             valid = False
-            config_file = config_file.replace('"check_update_every_x_sec"', '"check_update_every_x_sec_invalid"')
+            config_file = config_file.replace('"check_update_every_x_min"', '"check_update_every_x_min_invalid"')
     else:
         valid = False
-        config_file = config_file.replace('"check_update_every_x_sec"', '"check_update_every_x_sec_invalid"')
+        config_file = config_file.replace('"check_update_every_x_min"', '"check_update_every_x_min_invalid"')
     
-    if isinstance(config['export_every_x_sec'], int):
-        if config['export_every_x_sec'] < 1:
+    # 'export_dump_every_x_hour' >= 1 && <= 24 (1 day)
+    if isinstance(config['export_dump_every_x_hour'], int):
+        if config['export_dump_every_x_hour'] < 1 or config['export_dump_every_x_hour'] > 24:
             valid = False
-            config_file = config_file.replace('"export_every_x_sec"', '"export_every_x_sec_invalid"')
+            config_file = config_file.replace('"export_dump_every_x_hour"', '"export_dump_every_x_hour_invalid"')
     else:
         valid = False
-        config_file = config_file.replace('"export_every_x_sec"', '"export_every_x_sec_invalid"')
+        config_file = config_file.replace('"export_dump_every_x_hour"', '"export_dump_every_x_hour_invalid"')
     
-    if isinstance(config['server_maint_every_x_hour'], (int, float)):
-        if config['server_maint_every_x_hour'] < 1 or config['server_maint_every_x_hour'] > 240:
+    # 'export_live_every_x_min' >= 1 && <= 720 (12 hours)
+    if isinstance(config['export_live_every_x_min'], int):
+        if config['export_live_every_x_min'] < 1 or config['export_live_every_x_min'] > 720:
             valid = False
-            config_file = config_file.replace('"server_maint_every_x_hour"', '"server_maint_every_x_hour_invalid"')
+            config_file = config_file.replace('"export_live_every_x_min"', '"export_live_every_x_min_invalid"')
     else:
         valid = False
-        config_file = config_file.replace('"server_maint_every_x_hour"', '"server_maint_every_x_hour_invalid"')
+        config_file = config_file.replace('"export_live_every_x_min"', '"export_live_every_x_min_invalid"')
     
+    # 'db_maint_every_x_hour' >=1 && <= 240 (10 days)
+    if isinstance(config['db_maint_every_x_hour'], (int, float)):
+        if config['db_maint_every_x_hour'] < 1 or config['db_maint_every_x_hour'] > 240:
+            valid = False
+            config_file = config_file.replace('"db_maint_every_x_hour"', '"db_maint_every_x_hour_invalid"')
+    else:
+        valid = False
+        config_file = config_file.replace('"db_maint_every_x_hour"', '"db_maint_every_x_hour_invalid"')
+    
+    # 'export_path': location (absolute or relative) of folder to save the exported listings files
+    # (Listings export only performed when 'side' == 'server')
     if not Path.exists(Path(config['export_path'])):
         valid = False
         config_file = config_file.replace('"export_path"', '"export_path_invalid"')
@@ -578,7 +585,6 @@ def validate_config():
 
 def process_messages():
     global process_ack
-    tdb = tradedb.TradeDB(load = False)
     conn = tdb.getDB()
     # Place the database into autocommit mode to avoid issues with
     # sqlite3 doing automatic transactions.
@@ -596,21 +602,38 @@ def process_messages():
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"
     )
     avgStmt = "UPDATE Item SET avg_price = ? WHERE item_id = ?"
+    
+    # We want to perform some automatic DB maintenance when running for long periods.
+    maintenance_time = time.time() + (config['db_maint_every_x_hour'] * 3600)
 
     while go:
+        
         # We don't want the threads interfering with each other,
         # so pause this one if either the update checker or
         # listings exporter report that they're active.
-        if update_busy or export_busy:
+        if update_busy or dump_busy or live_busy:
             print("Message processor acknowledging busy signal.")
             process_ack = True
-            while (update_busy or export_busy) and go:
+            while (update_busy or dump_busy or live_busy) and go:
                 time.sleep(1)
-            process_ack = False
             # Just in case we caught the shutdown command while waiting.
             if not go:
                 break
             print("Busy signal off, message processor resuming.")
+        
+        if time.time() >= maintenance_time:
+            print("Performing server maintenance tasks." + str(datetime.datetime.now()))
+            try:
+                db_execute(db, "VACUUM")
+                db_execute(db, "PRAGMA optimize")
+                print("Server maintenance tasks completed. " + str(datetime.datetime.now()))
+            except Error as e:
+                print("Error performing maintenance:")
+                print("-----------------------------")
+                print(e)
+                print("-----------------------------")
+            
+            maintenance_time = time.time() + (config['db_maint_every_x_hour'] * 3600)
         
         # Either get the first message in the queue,
         # or go to sleep and wait if there aren't any.
@@ -744,127 +767,210 @@ def fetchIter(cursor, arraysize = 1000):
             yield result
 
 
-def export_listings():
+def export_live():
     """
     Creates a "listings-live.csv" file in "export_path" every X seconds,
     as defined in the configuration file.
     Only runs when program configured as server.
     """
-    global export_ack, export_busy
+    global live_ack, live_busy
     
-    if config['side'] == 'server':
-        # We want to perform some automatic DB maintenance when running as server.
-        maintenance_time = time.time() + (config['server_maint_every_x_hour'] * 3600)
-        tdb = tradedb.TradeDB(load = False)
-        db = tdb.getDB()
-        listings_file = (Path(config['export_path']).resolve() / Path("listings-live.csv"))
-        listings_tmp = listings_file.with_suffix(".tmp")
-        print("Listings will be exported to: \n\t" + str(listings_file))
-        
-        while go:
-            now = time.time()
-            # Wait until the time specified in the "export_every_x_sec" config
-            # before doing an export, watch for busy signal or shutdown signal
-            # while waiting. 
-            while time.time() < now + config['export_every_x_sec']:
-                if not go:
-                    break
-                if update_busy:
-                    print("Listings exporter acknowledging busy signal.")
-                    export_ack = True
-                    while update_busy and go:
-                        time.sleep(1)
-                    export_ack = False
-                    # Just in case we caught the shutdown command while waiting.
-                    if not go:
-                        break
-                    print("Busy signal off, listings exporter resuming.")
-                    now = time.time()
-                if time.time() >= maintenance_time:
-                    start = datetime.datetime.now()
-                    print("Performing server maintenance tasks." + str(start))
-                    try:
-                        db_execute(db, "VACUUM")
-                        db_execute(db, "PRAGMA optimize")
-                    except Error as e:
-                        print("Error performing maintenance: " + str(e))
-                    maintenance_time = time.time() + (config['server_maint_every_x_hour'] * 3600)
-                    complete = datetime.datetime.now()
-                    print("Server maintenance tasks completed. " + str(complete))
-                    print("Maintenance cycle took " + str(complete - start) + ".")
-                time.sleep(1)
-            
-            # We may be here because we broke out of the waiting loop,
-            # so we need to see if we lost go and quit the main loop if so. 
+    db = tdb.getDB()
+    listings_file = (Path(config['export_path']).resolve() / Path("listings-live.csv"))
+    listings_tmp = listings_file.with_suffix(".tmp")
+    print("Live listings will be exported to: \n\t" + str(listings_file))
+    
+    while go:
+        now = time.time()
+        # Wait until the time specified in the "export_live_every_x_min" config
+        # before doing an export, watch for busy signal or shutdown signal
+        # while waiting. 
+        while time.time() < now + (config['export_live_every_x_min'] * 60):
             if not go:
                 break
-            
-            start = datetime.datetime.now()
-            
-            print("Listings exporter sending busy signal. " + str(start))
-            export_busy = True
-            # We don't need to wait for acknowledgement from the update checker,
-            # because it waits for one from this, and this won't acknowledge
-            # until it's finished exporting.
-            while not (process_ack):
-                if not go:
-                    break
-            print("Busy signal acknowledged, getting listings for export.")
-            try:
-                cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem WHERE from_live = 1 ORDER BY station_id, item_id"))
-                results = list(cursor)
-            except sqlite3.DatabaseError as e:
-                print(e)
-                export_busy = False
-                continue
-            except AttributeError as e:
-                print("Got Attribute error trying to fetch StationItems: " + e)
-                print(cursor)
-                continue
-            export_busy = False
-            
-            print("Exporting 'listings-live.csv'. (Got listings in " + str(datetime.datetime.now() - start) + ")")
-            with open(str(listings_tmp), "w") as f:
-                f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
-                lineNo = 1
-                for result in results:
-                    # If we lose go during export, we need to abort.
-                    if not go:
-                        break
-                    station_id = str(result[0])
-                    commodity_id = str(result[1])
-                    sell_price = str(result[2])
-                    demand = str(result[3])
-                    demand_bracket = str(result[4])
-                    buy_price = str(result[5])
-                    supply = str(result[6])
-                    supply_bracket = str(result[7])
-                    collected_at = str(timegm(datetime.datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
-                    listing = station_id + "," + commodity_id + "," \
-                             +supply + "," + supply_bracket + "," + buy_price + "," \
-                             +sell_price + "," + demand + "," + demand_bracket + "," \
-                             +collected_at
-                    f.write(str(lineNo) + "," + listing + "\n")
-                    lineNo += 1
-            del results
-            # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it. 
-            if not go:
-                listings_tmp.unlink()
-                print("Export aborted, received shutdown signal.")
-                break
-            
-            while listings_file.exists():
-                try:
-                    listings_file.unlink()
-                except:
+            if dump_busy:
+                print("Live listings exporter acknowledging busy signal.")
+                live_ack = True
+                while dump_busy and go:
                     time.sleep(1)
-            listings_tmp.rename(listings_file)
-            print("Export completed in " + str(datetime.datetime.now() - start))
+                # Just in case we caught the shutdown command while waiting.
+                if not go:
+                    break
+                print("Busy signal off, live listings exporter resuming.")
+                now = time.time()
+            
+            time.sleep(1)
         
-        print("Listings exporter reporting shutdown.")
+        # We may be here because we broke out of the waiting loop,
+        # so we need to see if we lost go and quit the main loop if so. 
+        if not go:
+            break
+        
+        start = datetime.datetime.now()
+        
+        print("Live listings exporter sending busy signal. " + str(start))
+        live_busy = True
+        # We don't need to wait for acknowledgement from the dump exporter,
+        # because it waits for one from this, and this won't acknowledge
+        # until it's finished exporting.
+        while not (process_ack):
+            if not go:
+                break
+        print("Busy signal acknowledged, getting live listings for export.")
+        process_ack = False
+        try:
+            cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem WHERE from_live = 1 ORDER BY station_id, item_id"))
+            results = list(cursor)
+        except sqlite3.DatabaseError as e:
+            print(e)
+            live_busy = False
+            continue
+        except AttributeError as e:
+            print("Got Attribute error trying to fetch StationItems: " + e)
+            print(cursor)
+            live_busy = False
+            continue
+        
+        print("Exporting 'listings-live.csv'. (Got listings in " + str(datetime.datetime.now() - start) + ")")
+        with open(str(listings_tmp), "w") as f:
+            f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
+            lineNo = 1
+            for result in results:
+                # If we lose go during export, we need to abort.
+                if not go:
+                    break
+                station_id = str(result[0])
+                commodity_id = str(result[1])
+                sell_price = str(result[2])
+                demand = str(result[3])
+                demand_bracket = str(result[4])
+                buy_price = str(result[5])
+                supply = str(result[6])
+                supply_bracket = str(result[7])
+                collected_at = str(timegm(datetime.datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
+                listing = station_id + "," + commodity_id + "," \
+                         +supply + "," + supply_bracket + "," + buy_price + "," \
+                         +sell_price + "," + demand + "," + demand_bracket + "," \
+                         +collected_at
+                f.write(str(lineNo) + "," + listing + "\n")
+                lineNo += 1
+        
+        del results
+        live_busy = False
+        
+        # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it. 
+        if not go:
+            listings_tmp.unlink()
+            print("Export aborted, received shutdown signal.")
+            break
+        
+        while listings_file.exists():
+            try:
+                listings_file.unlink()
+            except:
+                time.sleep(1)
+        listings_tmp.rename(listings_file)
+        print("Export completed in " + str(datetime.datetime.now() - start))
     
-    else:
-        export_ack = True
+    print("Live listings exporter reporting shutdown.")
+    
+def export_dump():
+    """
+    Creates a "listings-live.csv" file in "export_path" every X seconds,
+    as defined in the configuration file.
+    Only runs when program configured as server.
+    """
+    global dump_busy
+    
+    db = tdb.getDB()
+    listings_file = (Path(config['export_path']).resolve() / Path("listings.csv"))
+    listings_tmp = listings_file.with_suffix(".tmp")
+    print("Listings will be exported to: \n\t" + str(listings_file))
+    
+    while go:
+        now = time.time()
+        # Wait until the time specified in the "export_dump_every_x_hour" config
+        # before doing an export, watch for busy signal or shutdown signal
+        # while waiting. 
+        while time.time() < now + (config['export_dump_every_x_hour'] * 3600):
+            if not go:
+                break
+            time.sleep(1)
+        
+        # We may be here because we broke out of the waiting loop,
+        # so we need to see if we lost go and quit the main loop if so. 
+        if not go:
+            break
+        
+        start = datetime.datetime.now()
+        
+        print("Listings exporter sending busy signal. " + str(start))
+        dump_busy = True
+
+        while not (process_ack and live_ack):
+            if not go:
+                break
+        print("Busy signal acknowledged, getting listings for export.")
+        process_ack = False
+        live_ack = False
+        try:
+            # Reset the live (i.e. since the last dump) flag for all stations
+            db_execute(db, "UPDATE Station SET from_live = 0")
+            cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem ORDER BY station_id, item_id"))
+            results = list(cursor)
+        except sqlite3.DatabaseError as e:
+            print(e)
+            dump_busy = False
+            continue
+        except AttributeError as e:
+            print("Got Attribute error trying to fetch StationItems: " + e)
+            print(cursor)
+            dump_busy = False
+            continue
+        
+        print("Exporting 'listings.csv'. (Got listings in " + str(datetime.datetime.now() - start) + ")")
+        with open(str(listings_tmp), "w") as f:
+            f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
+            lineNo = 1
+            for result in results:
+                # If we lose go during export, we need to abort.
+                if not go:
+                    break
+                station_id = str(result[0])
+                commodity_id = str(result[1])
+                sell_price = str(result[2])
+                demand = str(result[3])
+                demand_bracket = str(result[4])
+                buy_price = str(result[5])
+                supply = str(result[6])
+                supply_bracket = str(result[7])
+                collected_at = str(timegm(datetime.datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
+                listing = station_id + "," + commodity_id + "," \
+                         +supply + "," + supply_bracket + "," + buy_price + "," \
+                         +sell_price + "," + demand + "," + demand_bracket + "," \
+                         +collected_at
+                f.write(str(lineNo) + "," + listing + "\n")
+                lineNo += 1
+        
+        del results
+        dump_busy = False
+        
+        # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it. 
+        if not go:
+            listings_tmp.unlink()
+            print("Export aborted, received shutdown signal.")
+            break
+        
+        while listings_file.exists():
+            try:
+                listings_file.unlink()
+            except:
+                time.sleep(1)
+        listings_tmp.rename(listings_file)
+        print("Export completed in " + str(datetime.datetime.now() - start))
+    
+    print("Listings exporter reporting shutdown.")
+    
 
 
 def update_dicts():
@@ -930,53 +1036,31 @@ def update_dicts():
     
     return db_name, item_ids, system_ids, station_ids
 
+update_busy = False
+process_ack = False
+live_ack = False
+live_busy = False
+dump_busy = False
 
 go = True
 q = deque()
 config = load_config()
 validate_config()
 
+# get and process trade data messages from EDDN
 listener_thread = threading.Thread(target = get_messages)
-update_thread = threading.Thread(target = check_update)
 process_thread = threading.Thread(target = process_messages)
-export_thread = threading.Thread(target = export_listings)
 
-# The sooner the listener thread is started, the sooner
-# the messages start pouring in.
-print("Starting listener.")
-listener_thread.start()
+# (client) check if server has updated
+update_thread = threading.Thread(target = check_update)
 
-# First, check to make sure that EDDBlink plugin has made the changes
-# that need to be made for this thing to work correctly.
+# (server) perform updates according to config settings
+# market data updated since last dump
+live_thread = threading.Thread(target = export_live)
+# performs dump, resetting all live flags
+dump_thread = threading.Thread(target = export_dump)
+
 tdb = tradedb.TradeDB(load = False)
-with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
-    tmpFile = fh.read()
-
-firstRun = (tmpFile.find('system_id INTEGER PRIMARY KEY AUTOINCREMENT') != -1)
-
-if firstRun:
-    # EDDBlink plugin has not made the changes, time to fix that.
-    print("EDDBlink plugin has not been run at least once, running now.")
-    print("command: 'python trade.py import -P eddblink -O clean,skipvend'")
-    trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', 'clean,skipvend'))
-    print("Finished running EDDBlink plugin, no need to run again.")
-
-else:
-    print("Running EDDBlink to perform any needed infrastructure updates.")
-    options = 'solo'
-    if config['side'] == 'server':
-        options += ',fallback'
-    trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', options))
-    # Check to see if plugin updated database.
-    with tdb.sqlPath.open('r', encoding = "utf-8") as fh:
-        tmpFile = fh.read()
-    if tmpFile.find("type_id INTEGER DEFAULT 0 NOT NULL,") == -1:
-        sys.exit("EDDBlink plugin must be updated for listener to work correctly.")
-
-update_busy = False
-process_ack = False
-export_ack = False
-export_busy = False
 
 dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().dataDir).resolve()
 eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
@@ -985,19 +1069,26 @@ db_name, item_ids, system_ids, station_ids = update_dicts()
 
 print("Press CTRL-C at any time to quit gracefully.")
 try:
-    update_thread.start()
-    # Give the update checker enough time to see if an update is needed,
-    # before starting the message processor and listings exporter.
-    time.sleep(5)
+    listener_thread.start()
+    
+    if config['side'] == 'client':
+        update_thread.start()
+        # Give the update checker enough time to see if an update is needed,
+        # before starting the message processor and listings exporter.
+        time.sleep(5)
+
     process_thread.start()
-    export_thread.start()
+    
+    if config['side'] == 'server':
+        dump_thread.start()
+        time.sleep(1)
+        live_thread.start()
+    else:
+        live_ack = True
     
     while True:
         time.sleep(1)
 except KeyboardInterrupt:
     print("CTRL-C detected, stopping.")
-    if config['side'] == 'server':
-        print("Please wait for all four processes to report they are finished, in case they are currently active.")
-    else:
-        print("Please wait for all three processes to report they are finished, in case they are currently active.")
+    print("Please wait for all processes to report they are finished, in case they are currently active.")
     go = False
