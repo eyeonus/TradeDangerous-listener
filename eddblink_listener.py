@@ -29,7 +29,6 @@ from pathlib import Path
 from collections import defaultdict, namedtuple, deque, OrderedDict
 from distutils.version import LooseVersion
 
-
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
 #
 # Conditional permission to copy, modify, refactor or use this
@@ -584,7 +583,9 @@ def validate_config():
 
 
 def process_messages():
-    global process_ack
+    global process_ack, update_busy, dump_busy, live_busy
+    
+    tdb = tradedb.TradeDB(load = False)
     conn = tdb.getDB()
     # Place the database into autocommit mode to avoid issues with
     # sqlite3 doing automatic transactions.
@@ -773,8 +774,9 @@ def export_live():
     as defined in the configuration file.
     Only runs when program configured as server.
     """
-    global live_ack, live_busy
+    global live_ack, live_busy, process_ack, dump_busy
     
+    tdb = tradedb.TradeDB(load = False)
     db = tdb.getDB()
     listings_file = (Path(config['export_path']).resolve() / Path("listings-live.csv"))
     listings_tmp = listings_file.with_suffix(".tmp")
@@ -880,8 +882,9 @@ def export_dump():
     as defined in the configuration file.
     Only runs when program configured as server.
     """
-    global dump_busy
+    global dump_busy, process_ack, live_ack
     
+    tdb = tradedb.TradeDB(load = False)
     db = tdb.getDB()
     listings_file = (Path(config['export_path']).resolve() / Path("listings.csv"))
     listings_tmp = listings_file.with_suffix(".tmp")
