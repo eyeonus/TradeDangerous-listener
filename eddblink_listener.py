@@ -29,6 +29,9 @@ from pathlib import Path
 from collections import defaultdict, namedtuple, deque, OrderedDict
 from distutils.version import LooseVersion
 
+_minute = 60
+_hour = 3600
+
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
 #
 # Conditional permission to copy, modify, refactor or use this
@@ -287,6 +290,7 @@ def db_execute(db, sql_cmd, args = None):
                     raise sqlite3.OperationalError(e)
                 else:
                     print("Database is locked, waiting for access.", end = "\n")
+                    print(e)
                     time.sleep(1)
     return result
 
@@ -335,7 +339,7 @@ def check_update():
     while go:
         # Trigger daily EDDB update if the dumps have updated since last run.
         # Otherwise, go to sleep for {config['check_update_every_x_min']} minutes before checking again.
-        if time.time() >= now + (config['check_update_every_x_min'] * 60):
+        if time.time() >= now + (config['check_update_every_x_min'] * _minute):
             
             response = 0
             tryLeft = 10
@@ -399,7 +403,7 @@ def check_update():
                 now = round(time.time(), 0)
             
         if config['debug'] and ((round(time.time(), 0) - now) % 60 == 0):
-            print("Update checker is sleeping: " + str(int(now + (config['check_update_every_x_min'] * 60) - round(time.time(), 0))) + " minutes remain until next check.")
+            print("Update checker is sleeping: " + str(int(now + (config['check_update_every_x_min'] * _minute) - round(time.time(), 0))) + " minutes remain until next check.")
         time.sleep(1)
     
     #If not go:
@@ -605,7 +609,7 @@ def process_messages():
     avgStmt = "UPDATE Item SET avg_price = ? WHERE item_id = ?"
     
     # We want to perform some automatic DB maintenance when running for long periods.
-    maintenance_time = time.time() + (config['db_maint_every_x_hour'] * 3600)
+    maintenance_time = time.time() + (config['db_maint_every_x_hour'] * _hour)
 
     while go:
         
@@ -634,7 +638,7 @@ def process_messages():
                 print(e)
                 print("-----------------------------")
             
-            maintenance_time = time.time() + (config['db_maint_every_x_hour'] * 3600)
+            maintenance_time = time.time() + (config['db_maint_every_x_hour'] * _hour)
         
         # Either get the first message in the queue,
         # or go to sleep and wait if there aren't any.
@@ -787,7 +791,7 @@ def export_live():
         # Wait until the time specified in the "export_live_every_x_min" config
         # before doing an export, watch for busy signal or shutdown signal
         # while waiting. 
-        while time.time() < now + (config['export_live_every_x_min'] * 60):
+        while time.time() < now + (config['export_live_every_x_min'] * _minute):
             if not go:
                 break
             if dump_busy:
@@ -828,7 +832,7 @@ def export_live():
             live_busy = False
             continue
         except AttributeError as e:
-            print("Got Attribute error trying to fetch StationItems: " + e)
+            print("Got Attribute error trying to fetch StationItems: " + str(e))
             print(cursor)
             live_busy = False
             continue
@@ -895,7 +899,7 @@ def export_dump():
         # Wait until the time specified in the "export_dump_every_x_hour" config
         # before doing an export, watch for busy signal or shutdown signal
         # while waiting. 
-        while time.time() < now + (config['export_dump_every_x_hour'] * 3600):
+        while time.time() < now + (config['export_dump_every_x_hour'] * _hour):
             if not go:
                 break
             time.sleep(1)
@@ -917,8 +921,17 @@ def export_dump():
         process_ack = False
         live_ack = False
         try:
-            # Reset the live (i.e. since the last dump) flag for all stations
-            db_execute(db, "UPDATE Station SET from_live = 0")
+            # Reset the live (i.e. since the last dump) flag for all StationItems
+            db_execute(db, "UPDATE StationItem SET from_live = 0")
+            success = False
+            while not success:
+                try:
+                    db.commit()
+                    success = True
+                except sqlite3.OperationalError:
+                    print("(commit) Database is locked, waiting for access.", end = "\r")
+                    time.sleep(1)
+
             cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem ORDER BY station_id, item_id"))
             results = list(cursor)
         except sqlite3.DatabaseError as e:
@@ -926,7 +939,7 @@ def export_dump():
             dump_busy = False
             continue
         except AttributeError as e:
-            print("Got Attribute error trying to fetch StationItems: " + e)
+            print("Got Attribute error trying to fetch StationItems: " + str(e))
             print(cursor)
             dump_busy = False
             continue
