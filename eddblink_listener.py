@@ -590,11 +590,11 @@ def process_messages():
     global process_ack, update_busy, dump_busy, live_busy
     
     tdb = tradedb.TradeDB(load = False)
-    conn = tdb.getDB()
+    db = tdb.getDB()
     # Place the database into autocommit mode to avoid issues with
     # sqlite3 doing automatic transactions.
-    conn.isolation_level = None
-    curs = conn.cursor()
+    db.isolation_level = None
+    curs = db.cursor()
     
     # same SQL every time
     updStmt = "UPDATE Station SET system_id = ? WHERE station_id = ?"
@@ -632,7 +632,7 @@ def process_messages():
                 db_execute(db, "VACUUM")
                 db_execute(db, "PRAGMA optimize")
                 print("Server maintenance tasks completed. " + str(datetime.datetime.now()))
-            except Error as e:
+            except Exception as e:
                 print("Error performing maintenance:")
                 print("-----------------------------")
                 print(e)
@@ -669,7 +669,7 @@ def process_messages():
                     try:
                         curs.execute("BEGIN IMMEDIATE")
                         curs.execute(updStmt, (system_id, station_id))
-                        conn.commit()
+                        db.commit()
                         success = True
                     except sqlite3.IntegrityError:
                         if config['verbose']:
@@ -745,7 +745,7 @@ def process_messages():
         success = False
         while not success:
             try:
-                conn.commit()
+                db.commit()
                 success = True
             except sqlite3.OperationalError:
                 print("Database is locked, waiting for access.", end = "\n")
@@ -786,8 +786,8 @@ def export_live():
     listings_tmp = listings_file.with_suffix(".tmp")
     print("Live listings will be exported to: \n\t" + str(listings_file))
     
+    now = time.time()
     while go:
-        now = time.time()
         # Wait until the time specified in the "export_live_every_x_min" config
         # before doing an export, watch for busy signal or shutdown signal
         # while waiting. 
@@ -807,6 +807,7 @@ def export_live():
             
             time.sleep(1)
         
+        now = time.time()
         # We may be here because we broke out of the waiting loop,
         # so we need to see if we lost go and quit the main loop if so. 
         if not go:
@@ -894,8 +895,8 @@ def export_dump():
     listings_tmp = listings_file.with_suffix(".tmp")
     print("Listings will be exported to: \n\t" + str(listings_file))
     
+    now = time.time()
     while go:
-        now = time.time()
         # Wait until the time specified in the "export_dump_every_x_hour" config
         # before doing an export, watch for busy signal or shutdown signal
         # while waiting. 
@@ -904,6 +905,7 @@ def export_dump():
                 break
             time.sleep(1)
         
+        now = time.time()
         # We may be here because we broke out of the waiting loop,
         # so we need to see if we lost go and quit the main loop if so. 
         if not go:
