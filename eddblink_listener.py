@@ -40,6 +40,7 @@ _hour = 3600
 class MarketPrice(namedtuple('MarketPrice', [
         'system',
         'station',
+        'market_id',
         'commodities',
         'timestamp',
         'uploader',
@@ -206,6 +207,7 @@ class Listener(object):
                         message = data["message"]
                         system = message["systemName"].upper()
                         station = message["stationName"].upper()
+                        market_id = message["marketId"]
                         commodities = message["commodities"]
                         timestamp = message["timestamp"]
                         uploader = header["uploaderID"]
@@ -255,7 +257,7 @@ class Listener(object):
                     # expensive than looking up a potentially large dictionary
                     # by STATION/SYSTEM:ITEM...
                     oldEntryList[0] = MarketPrice(
-                        system, station, commodities,
+                        system, station, market_id, commodities,
                         timestamp,
                         uploader, software, swVersion,
                     )
@@ -597,16 +599,31 @@ def process_messages():
     curs = db.cursor()
     
     # same SQL every time
-    updStmt = "UPDATE Station SET system_id = ? WHERE station_id = ?"
-    delStmt = "DELETE FROM StationItem WHERE station_id = ?"
-    insStmt = (
+    deleteStationItemEntry = "DELETE FROM StationItem WHERE station_id = ?"
+    insertStationItemEntry = (
         "INSERT OR IGNORE INTO StationItem("
         " station_id, item_id, modified,"
         " demand_price, demand_units, demand_level,"
         " supply_price, supply_units, supply_level, from_live)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"
     )
-    avgStmt = "UPDATE Item SET avg_price = ? WHERE item_id = ?"
+    updateItemAveragePrice = "UPDATE Item SET avg_price = ? WHERE item_id = ?"
+    
+    getOldStationInfo = (
+        "SELECT name, ls_from_star,blackmarket, max_pad_size, "
+        "market, shipyard, outfitting, rearm, refuel, repair, "
+        "planetary, type_id from Station, WHERE station_id = ?"
+    )
+    insertNewStation = (
+        "INSERT OR IGNORE INTO Station("
+        " station_id, name, system_id, ls_from_star,"
+        " blackmarket, max_pad_size, market, shipyard,"
+        " modified, outfitting, rearm, refuel, repair,"
+        " planetary, type_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)" 
+    )
+    removeOldStation = "DELETE FROM Station WHERE station_id = ?"
+    moveStationToNewSystem = "UPDATE Station SET system_id = ? WHERE station_id = ?"
     
     # We want to perform some automatic DB maintenance when running for long periods.
     maintenance_time = time.time() + (config['db_maint_every_x_hour'] * _hour)
@@ -648,43 +665,85 @@ def process_messages():
             time.sleep(1)
             continue
         
-        # Get the station_is using the system and station names.
+        
+        # Get the station_id using the system and station names.
         system = entry.system.upper()
         station = entry.station.upper()
-        # And the software version used to upload the schema.
-        software = entry.software
-        swVersion = entry.version
+        market_id = entry.market_id
+        modified = entry.timestamp.replace('T', ' ').replace('Z', '')
+        commodities = entry.commodities
         
-        station_id = station_ids.get(system + "/" + station)
-        if not station_id:
-            # Mobile stations are stored in the dict a bit differently.
-            station_id = station_ids.get("MEGASHIP/" + station)
-            system_id = system_ids.get(system)
-            if station_id and system_id:
-                if config['verbose']:
-                    print("Megaship station, updating system to " + system)
-                # Update the system the station is in, in case it has changed.
+        #All the stations should be stored using the market_id.
+        exists = curs.execute("SELECT station_id FROM Station WHERE station_id = ?", market_id).fetchone()
+        
+        if not exists:
+            station_id = station_ids.get(system + "/" + station)
+            if not station_id:
+                # Mobile stations are stored in the dict a bit differently.
+                station_id = station_ids.get("MEGASHIP/" + station)
+                system_id = system_ids.get(system)
+                if station_id and system_id:
+                    if config['verbose']:
+                        print("Megaship station, updating system to " + system)
+                    # Update the system the station is in, in case it has changed.
+                    success = False
+                    while not success:
+                        try:
+                            curs.execute("BEGIN IMMEDIATE")
+                            curs.execute(moveStationToNewSystem, (system_id, station_id))
+                            db.commit()
+                            success = True
+                        except sqlite3.IntegrityError:
+                            if config['verbose']:
+                                print("ERROR: Not found in Systems: " + system + "/" + station)
+                            continue
+                        except sqlite3.OperationalError:
+                            print("Database is locked, waiting for access.", end = "\n")
+                            time.sleep(1)
+                else:
+                    # If we can't find it by any of these means, it must be a 'new' station.
+                    if config['verbose']:
+                        print("Not found in Stations: " + system + "/" + station + ", inserting into DB.")
+                    # Add the new Station with '?' for all unknowns.                
+                    success = False
+                    while not success:
+                        try:
+                            curs.execute("BEGIN IMMEDIATE")
+                            curs.execute(insertNewStation, (market_id, station, system_id, 1, 
+                                                            '?', '?', 'Y', '?', modified, '?', 
+                                                            '?', '?', '?', '?', 0))
+                            db.commit()
+                            success = True
+                        except sqlite3.IntegrityError as e:
+                            if config['verbose']:
+                                print(e)
+                            continue
+                        except sqlite3.OperationalError:
+                            print("Database is locked, waiting for access.", end = "\n")
+                            time.sleep(1)
+                    continue
+            if station_id and (station_id != market_id):
                 success = False
                 while not success:
                     try:
                         curs.execute("BEGIN IMMEDIATE")
-                        curs.execute(updStmt, (system_id, station_id))
+                        result = curs.execute(getOldStationInfo, station_id)
+                        nm, ls, bm, mps, mk, sy, of, ra, rf, rp, pl, ti = result.fetchone()
+                                            
+                        curs.execute(insertNewStation, (market_id, nm, system_id, ls, bm, 
+                                                        mps, mk, sy, modified, 
+                                                        of, ra, rf, rp, pl, ti))
+                        curs.execute(removeOldStation, station_id)
                         db.commit()
                         success = True
-                    except sqlite3.IntegrityError:
+                    except sqlite3.IntegrityError as e:
                         if config['verbose']:
-                            print("ERROR: Not found in Systems: " + system + "/" + station)
+                            print(e)
                         continue
                     except sqlite3.OperationalError:
                         print("Database is locked, waiting for access.", end = "\n")
                         time.sleep(1)
-            else:
-                if config['verbose']:
-                    print("ERROR: Not found in Stations: " + system + "/" + station)
-                continue
-        
-        modified = entry.timestamp.replace('T', ' ').replace('Z', '')
-        commodities = entry.commodities
+        station_id = market_id
         
         start_update = datetime.datetime.now()
         
@@ -726,18 +785,18 @@ def process_messages():
                 print("Database is locked, waiting for access.", end = "\n")
                 time.sleep(1)
         
-        curs.execute(delStmt, (station_id,))
+        curs.execute(deleteStationItemEntry, (station_id,))
         
         for item in itemList:
             try:
-                curs.execute(insStmt, item)
+                curs.execute(insertStationItemEntry, item)
             except Exception as e:
                 if config['debug']:
                     print("Error '" + str(e) + "' when inserting item:\n\t(Not in DB's Item table?) fdev_id: " + str(item[1]))
         
         for avg in avgList:
             try:
-                curs.execute(avgStmt, avg)
+                curs.execute(updateItemAveragePrice, avg)
             except Exception as e:
                 if config['debug']:
                     print("Error '" + str(e) + "' when inserting average:\n" + str(avg))
