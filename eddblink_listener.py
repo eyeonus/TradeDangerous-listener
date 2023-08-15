@@ -221,7 +221,7 @@ class Listener(object):
                         if config['debug'] or config['verbose']:
                             print(system + "/" + station + " update rejected from client not on whitelist: " + software + " v" + swVersion + "\n")
                         continue
-                    # Upload software with version less than the defined minimum is ignored. 
+                    # Upload software with version less than the defined minimum is ignored.
                     if whitelist_match[0].get("minversion"):
                         if LooseVersion(swVersion) < LooseVersion(whitelist_match[0].get("minversion")):
                             if config['debug']:
@@ -337,7 +337,7 @@ def check_update():
     
     request.urlopen(BASE_URL + LISTINGS)
     url = BASE_URL + LISTINGS
-        
+    
     while go:
         # Trigger daily EDDB update if the dumps have updated since last run.
         # Otherwise, go to sleep for {config['check_update_every_x_min']} minutes before checking again.
@@ -384,7 +384,6 @@ def check_update():
                         rep = rep + 1
                     time.sleep(1)
                 print("Busy signal acknowledged, performing EDDB dump update.")
-                process_ack = False
                 options = config['plugin_options']
                 try:
                     trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', options))
@@ -395,15 +394,15 @@ def check_update():
                     print("Update complete, turning off busy signal.")
                     update_busy = False
                     now = round(time.time(), 0)
-                                
+                
                 except Exception as e:
                     print("Error when running update:")
                     print(e)
-                
+            
             else:
                 print("No update, checking again in " + next_check + ".")
                 now = round(time.time(), 0)
-            
+        
         if config['debug'] and ((round(time.time(), 0) - now) % 60 == 0):
             print("Update checker is sleeping: " + str(int(now + (config['check_update_every_x_min'] * _minute) - round(time.time(), 0))) + " minutes remain until next check.")
         time.sleep(1)
@@ -412,12 +411,11 @@ def check_update():
     print("Update checker reporting shutdown.")
 
 
-
 def load_config():
     """
-    Loads the settings from 'eddblink-listener-configuration.json'. 
-    If the config_file does not exist or is missing any settings, 
-    the default will be used for any missing setting, 
+    Loads the settings from 'eddblink-listener-configuration.json'.
+    If the config_file does not exist or is missing any settings,
+    the default will be used for any missing setting,
     and the config_file will be updated to include all settings,
     preserving the existing (if any) settings' current values.
     """
@@ -467,7 +465,7 @@ def load_config():
     else:
         # If the config_file doesn't exist, need to make it.
         write_config = True
-    
+
 
     # Write the current configuration to the file, if needed.
     if write_config:
@@ -517,7 +515,7 @@ def validate_config():
         valid_options = ""
         cmdenv = commands.CommandIndex().parse
         plugin_options = plugins.load(cmdenv(['trade', 'import', '--plug', 'eddblink', '-O', 'help']).plug, "ImportPlugin").pluginOptions.keys()
-       
+        
         for option in options:
             if option in plugin_options:
                 if valid_options != "":
@@ -528,11 +526,11 @@ def validate_config():
         
         if not valid:
             if valid_options.find("force") == -1:
-                valid_options = "force," + valid_options 
+                valid_options = "force," + valid_options
             if valid_options.find("skipvend") == -1:
-                valid_options = "skipvend," + valid_options 
+                valid_options = "skipvend," + valid_options
             if valid_options.find("all") == -1:
-                valid_options = "all," + valid_options 
+                valid_options = "all," + valid_options
             config_file = config_file.replace(config['plugin_options'], valid_options)
     else:
         valid = False
@@ -620,14 +618,14 @@ def process_messages():
         " blackmarket, max_pad_size, market, shipyard,"
         " modified, outfitting, rearm, refuel, repair,"
         " planetary, type_id)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)" 
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     removeOldStation = "DELETE FROM Station WHERE station_id = ?"
     moveStationToNewSystem = "UPDATE Station SET system_id = ? WHERE station_id = ?"
     
     # We want to perform some automatic DB maintenance when running for long periods.
     maintenance_time = time.time() + (config['db_maint_every_x_hour'] * _hour)
-
+    
     while go:
         
         # We don't want the threads interfering with each other,
@@ -641,6 +639,7 @@ def process_messages():
             # Just in case we caught the shutdown command while waiting.
             if not go:
                 break
+            process_ack = False
             print("Busy signal off, message processor resuming.")
         
         if time.time() >= maintenance_time:
@@ -664,7 +663,6 @@ def process_messages():
         except IndexError:
             time.sleep(1)
             continue
-        
         
         # Get the station_id using the system and station names.
         system = entry.system.upper()
@@ -704,13 +702,13 @@ def process_messages():
                     # If we can't find it by any of these means, it must be a 'new' station.
                     if config['verbose']:
                         print("Not found in Stations: " + system + "/" + station + ", inserting into DB.")
-                    # Add the new Station with '?' for all unknowns.                
+                    # Add the new Station with '?' for all unknowns.
                     success = False
                     while not success:
                         try:
                             curs.execute("BEGIN IMMEDIATE")
-                            curs.execute(insertNewStation, (market_id, station, system_id, 1, 
-                                                            '?', '?', 'Y', '?', modified, '?', 
+                            curs.execute(insertNewStation, (market_id, station, system_id, 1,
+                                                            '?', '?', 'Y', '?', modified, '?',
                                                             '?', '?', '?', '?', 0))
                             db.commit()
                             success = True
@@ -729,9 +727,9 @@ def process_messages():
                         curs.execute("BEGIN IMMEDIATE")
                         result = curs.execute(getOldStationInfo, station_id)
                         nm, ls, bm, mps, mk, sy, of, ra, rf, rp, pl, ti = result.fetchone()
-                                            
-                        curs.execute(insertNewStation, (market_id, nm, system_id, ls, bm, 
-                                                        mps, mk, sy, modified, 
+                        
+                        curs.execute(insertNewStation, (market_id, nm, system_id, ls, bm,
+                                                        mps, mk, sy, modified,
                                                         of, ra, rf, rp, pl, ti))
                         curs.execute(removeOldStation, station_id)
                         db.commit()
@@ -849,7 +847,7 @@ def export_live():
     while go:
         # Wait until the time specified in the "export_live_every_x_min" config
         # before doing an export, watch for busy signal or shutdown signal
-        # while waiting. 
+        # while waiting.
         while time.time() < now + (config['export_live_every_x_min'] * _minute):
             if not go:
                 break
@@ -861,6 +859,7 @@ def export_live():
                 # Just in case we caught the shutdown command while waiting.
                 if not go:
                     break
+                live_ack = False
                 print("Busy signal off, live listings exporter resuming.")
                 now = time.time()
             
@@ -868,7 +867,7 @@ def export_live():
         
         now = time.time()
         # We may be here because we broke out of the waiting loop,
-        # so we need to see if we lost go and quit the main loop if so. 
+        # so we need to see if we lost go and quit the main loop if so.
         if not go:
             break
         
@@ -883,7 +882,6 @@ def export_live():
             if not go:
                 break
         print("Busy signal acknowledged, getting live listings for export.")
-        process_ack = False
         try:
             cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem WHERE from_live = 1 ORDER BY station_id, item_id"))
             results = list(cursor)
@@ -924,7 +922,7 @@ def export_live():
         del results
         live_busy = False
         
-        # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it. 
+        # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it.
         if not go:
             listings_tmp.unlink()
             print("Export aborted, received shutdown signal.")
@@ -939,7 +937,8 @@ def export_live():
         print("Export completed in " + str(datetime.datetime.now() - start))
     
     print("Live listings exporter reporting shutdown.")
-    
+
+
 def export_dump():
     """
     Creates a "listings-live.csv" file in "export_path" every X seconds,
@@ -958,7 +957,7 @@ def export_dump():
     while go:
         # Wait until the time specified in the "export_dump_every_x_hour" config
         # before doing an export, watch for busy signal or shutdown signal
-        # while waiting. 
+        # while waiting.
         while time.time() < now + (config['export_dump_every_x_hour'] * _hour):
             if not go:
                 break
@@ -966,7 +965,7 @@ def export_dump():
         
         now = time.time()
         # We may be here because we broke out of the waiting loop,
-        # so we need to see if we lost go and quit the main loop if so. 
+        # so we need to see if we lost go and quit the main loop if so.
         if not go:
             break
         
@@ -974,13 +973,11 @@ def export_dump():
         
         print("Listings exporter sending busy signal. " + str(start))
         dump_busy = True
-
+        
         while not (process_ack and live_ack):
             if not go:
                 break
         print("Busy signal acknowledged, getting listings for export.")
-        process_ack = False
-        live_ack = False
         try:
             # Reset the live (i.e. since the last dump) flag for all StationItems
             db_execute(db, "UPDATE StationItem SET from_live = 0")
@@ -992,7 +989,7 @@ def export_dump():
                 except sqlite3.OperationalError:
                     print("(commit) Database is locked, waiting for access.", end = "\r")
                     time.sleep(1)
-
+            
             cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem ORDER BY station_id, item_id"))
             results = list(cursor)
         except sqlite3.DatabaseError as e:
@@ -1032,7 +1029,7 @@ def export_dump():
         del results
         dump_busy = False
         
-        # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it. 
+        # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it.
         if not go:
             listings_tmp.unlink()
             print("Export aborted, received shutdown signal.")
@@ -1047,7 +1044,6 @@ def export_dump():
         print("Export completed in " + str(datetime.datetime.now() - start))
     
     print("Listings exporter reporting shutdown.")
-    
 
 
 def update_dicts():
@@ -1068,7 +1064,7 @@ def update_dicts():
     
     # We'll use this to get the item_id from the fdev_id because it's faster than a database lookup.
     item_ids = dict()
-
+    
     # Rare items don't have an EDDB item_id, so we'll just store them by the fdev_id
     for line in iter(edcd_rare_dict):
         item_ids[line['id']] = line['id']
@@ -1085,7 +1081,7 @@ def update_dicts():
         for item in items:
             item_ids[item[iid_key]] = int(item['unq:item_id'])
     
-    # We're using these for the same reason. 
+    # We're using these for the same reason.
     system_names = dict()
     system_ids = dict()
     with open(str(dataPath / Path("System.csv")), "r", encoding="utf8") as fh:
@@ -1097,7 +1093,7 @@ def update_dicts():
     with open(str(dataPath / Path("Station.csv")), "r", encoding="utf8") as fh:
         stations = csv.DictReader(fh, quotechar = "'")
         for station in stations:
-            # Mobile stations can move between systems. The mobile stations 
+            # Mobile stations can move between systems. The mobile stations
             # have the following data in their entry in stations.jsonl:
             # "type_id":19,"type":"Megaship"
             # Except for that one Orbis station.
@@ -1112,6 +1108,7 @@ def update_dicts():
     del system_names
     
     return db_name, item_ids, system_ids, station_ids
+
 
 update_busy = False
 process_ack = False
@@ -1153,7 +1150,7 @@ try:
         # Give the update checker enough time to see if an update is needed,
         # before starting the message processor and listings exporter.
         time.sleep(5)
-
+    
     process_thread.start()
     
     if config['side'] == 'server':
