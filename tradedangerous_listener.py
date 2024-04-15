@@ -12,16 +12,18 @@ import sqlite3
 import csv
 import codecs
 import sys
+#from builtins import False
 
 try:
+    import cache
     import trade
     import tradedb
     import tradeenv
     import transfers
-    import plugins.eddblink_plug
+    import plugins.spansh_plug
 except:
-    from tradedangerous import cli as trade, tradedb, tradeenv, transfers, plugins, commands
-    from tradedangerous.plugins import eddblink_plug
+    from tradedangerous import cli as trade, cache, tradedb, tradeenv, transfers, plugins, commands
+    from tradedangerous.plugins import spansh_plug
 
 from urllib import request
 from calendar import timegm
@@ -235,11 +237,12 @@ class Listener(object):
                     #Find the culprit!
                     if '.' in timestamp and config['debug']:
                         print("Client " + software + ", version " + swVersion + ", uses microseconds.")
-                        print("Full message from the culprit:")
                         for key in header:
-                            print(str(key) + ": " + str(header[key]))
+                            if "timestamp" in key:
+                                print(str(key) + ": " + str(header[key]))
                         for key in message:
-                            print(str(key) + ": " + str(message[key]))
+                            if "timestamp" in key:
+                                print(str(key) + ": " + str(message[key]))
                     
                     # We'll get either an empty list or a list containing
                     # a MarketPrice. This saves us having to do the expensive
@@ -329,14 +332,19 @@ def check_update():
     dumpModded = 0
     localModded = 0
     
+    '''
     # The following values only need to be assigned once, no need to be in the while loop.
     BASE_URL = plugins.eddblink_plug.BASE_URL
     LISTINGS = "listings.csv"
     listings_path = Path(LISTINGS)
+    '''
     Months = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6, 'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
+    SOURCE_URL = 'https://downloads.spansh.co.uk/galaxy_stations.json'
     
+    '''
     request.urlopen(BASE_URL + LISTINGS)
     url = BASE_URL + LISTINGS
+    '''
     
     while go:
         # Trigger daily EDDB update if the dumps have updated since last run.
@@ -347,7 +355,7 @@ def check_update():
             tryLeft = 10
             while tryLeft != 0:
                 try:
-                    response = request.urlopen(url)
+                    response = request.urlopen(SOURCE_URL)
                     tryLeft = 0
                 except:
                     tryLeft -= 1
@@ -356,10 +364,11 @@ def check_update():
                 print("Error attempting to check for update, no response from server.")
                 continue
             
+            '''
             # Need to parse the "Last-Modified" header into a Unix-epoch, and Python's strptime()
             # won't work because it is locale-dependent, meaning it would only work in English-
             # speaking countries.
-            dDL = request.urlopen(url).getheader("Last-Modified").split(' ')
+            dDL = request.urlopen(SOURCE_URL).getheader("Last-Modified").split(' ')
             dTL = dDL[4].split(':')
             
             dumpDT = datetime.datetime(int(dDL[3]), Months[dDL[2]], int(dDL[1]), \
@@ -371,34 +380,58 @@ def check_update():
             if Path.exists(eddbPath / listings_path):
                 localModded = (eddbPath / listings_path).stat().st_mtime
             
+            
             if localModded < dumpModded:
+            '''
+            last_update = request.urlopen(SOURCE_URL).getheader("Last-Modified")
+            if not config['last_update'] or config['last_update'] < last_update:
+                # The spansh plugin writes to a prices file, leaving the database available
+                # during processing of the Spansh data, so we can consider the update as not
+                # 'available' until the plugin has finished creating the prices file.
+                # NOTE: plugin by default imports the resulting prices file internally, but
+                # since we can't trigger the busy signal from within the execution of the
+                # plugin, we instead tell it NOT to so the busy signal can be flipped on
+                # prior to the importing of the file, using the 'listener' option.
+                print("Spansh update detected, processing update....")
+                trade.main(('trade.py', 'import', '-P', 'spansh', '-O' 'listener,url=' + SOURCE_URL))
+
                 # TD will fail with an error if the database is in use while it's trying
                 # to do its thing, so we need to make sure that neither of the database
                 # editing methods are doing anything before running.
                 update_busy = True
-                print("EDDB update available, waiting for busy signal acknowledgement before proceeding.")
+                print("Spansh update available, waiting for busy signal acknowledgement before proceeding.")
                 while not (process_ack):
                     rep = 0
                     if config['debug']:
                         print("Still waiting for acknowledgment. (" + str(rep) + ")", end = '\r')
                         rep = rep + 1
                     time.sleep(1)
-                print("Busy signal acknowledged, performing EDDB dump update.")
-                options = config['plugin_options']
-                try:
-                    trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', options))
-                    
-                    # Since there's been an update, we need to redo all this.
-                    db_name, item_ids, system_ids, station_ids = update_dicts()
-                    
-                    print("Update complete, turning off busy signal.")
-                    update_busy = False
-                    now = round(time.time(), 0)
                 
+                print("Busy signal acknowledged, performing update.")
+                try:
+                    tdenv = tradeenv.TradeEnv()
+                    tdenv.mergeImport = True
+                    tdb = tradedb.TradeDB(tdenv, load = False)
+                    cache.importDataFromFile(tdb, tdenv, tdenv.tmpDir / Path("spansh.prices"))
+                    
                 except Exception as e:
                     print("Error when running update:")
                     print(e)
-            
+                
+                if config['debug']:
+                    print("Updating dictionaries...")
+                # Since there's been an update, we need to redo all this.
+                db_name, item_ids, system_ids, station_ids = update_dicts()
+                
+                print("Update complete, turning off busy signal.")
+                update_busy = False
+                
+                config['last_update'] = last_update
+                with open("tradedangerous-listener-config.json", "w") as config_file:
+                    json.dump(config, config_file, indent = 4)
+                
+                now = round(time.time(), 0)
+                            
             else:
                 print("No update, checking again in " + next_check + ".")
                 now = round(time.time(), 0)
@@ -413,7 +446,7 @@ def check_update():
 
 def load_config():
     """
-    Loads the settings from 'eddblink-listener-configuration.json'.
+    Loads the settings from 'tradedangerous-listener-configuration.json'.
     If the config_file does not exist or is missing any settings,
     the default will be used for any missing setting,
     and the config_file will be updated to include all settings,
@@ -427,7 +460,7 @@ def load_config():
                             ('side', 'client'),                                                     \
                             ('verbose', True),                                                      \
                             ('debug', False),                                                       \
-                            ('plugin_options', "all,skipvend,force"),                               \
+                            ('last_update', None),                                                  \
                             ('check_update_every_x_min', 60),                                       \
                             ('export_live_every_x_min', 5),                                         \
                             ('export_dump_every_x_hour', 24),                                       \
@@ -444,8 +477,8 @@ def load_config():
                         ])
     
     # Load the settings from the configuration file if it exists.
-    if Path.exists(Path("eddblink-listener-config.json")):
-        with open("eddblink-listener-config.json", "r") as fh:
+    if Path.exists(Path("tradedangerous-listener-config.json")):
+        with open("tradedangerous-listener-config.json", "r") as fh:
             try:
                 temp = json.load(fh, object_pairs_hook = OrderedDict)
                 # For each setting in config,
@@ -469,7 +502,7 @@ def load_config():
 
     # Write the current configuration to the file, if needed.
     if write_config:
-        with open("eddblink-listener-config.json", "w") as config_file:
+        with open("tradedangerous-listener-config.json", "w") as config_file:
             json.dump(config, config_file, indent = 4)
     
     # We now have a config that has valid values for all the settings, and a
@@ -485,7 +518,7 @@ def validate_config():
     """
     global config
     valid = True
-    with open("eddblink-listener-config.json", "r") as fh:
+    with open("tradedangerous-listener-config.json", "r") as fh:
         config_file = fh.read()
     
     # For each of these settings, if the value is invalid, mark the key.
@@ -506,10 +539,17 @@ def validate_config():
         valid = False
         config_file = config_file.replace('"debug"', '"debug_invalid"')
     
+    #The spansh import plugin doesn't need any options specified.
+    if config.get('plugin_options'):
+        valid = False
+        config_file = config_file.replace('"plugin_options"', '"plugin_options_invalid"')
+        
+    '''
     # 'plugin_options': For this one, rather than completely replace invalid
     # values with the default, check to see if any of the values are valid
     # and keep those, prepending the default values to the setting if they
     # aren't already in the setting.
+
     if isinstance(config['plugin_options'], str):
         options = config['plugin_options'].split(',')
         valid_options = ""
@@ -535,6 +575,7 @@ def validate_config():
     else:
         valid = False
         config_file = config_file.replace('"plugin_options"', '"plugin_options_invalid"')
+    '''
     
     # 'check_update_every_x_min' >= 1 && <= 1440 (1 day)
     if isinstance(config['check_update_every_x_min'], int):
@@ -581,7 +622,7 @@ def validate_config():
     if not valid:
         # Before we reload the config to set the invalid values back to default,
         # we need to write the changes we made to the file.
-        with open("eddblink-listener-config.json", "w") as fh:
+        with open("tradedangerous-listener-config.json", "w") as fh:
             fh.write(config_file)
         config = load_config()
 
@@ -610,7 +651,7 @@ def process_messages():
     getOldStationInfo = (
         "SELECT name, ls_from_star,blackmarket, max_pad_size, "
         "market, shipyard, outfitting, rearm, refuel, repair, "
-        "planetary, type_id from Station, WHERE station_id = ?"
+        "planetary, type_id from Station WHERE station_id = ?"
     )
     insertNewStation = (
         "INSERT OR IGNORE INTO Station("
@@ -672,14 +713,14 @@ def process_messages():
         commodities = entry.commodities
         
         #All the stations should be stored using the market_id.
-        exists = curs.execute("SELECT station_id FROM Station WHERE station_id = ?", market_id).fetchone()
+        exists = curs.execute("SELECT station_id FROM Station WHERE station_id = ?", (market_id,)).fetchone()
         
         if not exists:
             station_id = station_ids.get(system + "/" + station)
+            system_id = system_ids.get(system)
             if not station_id:
                 # Mobile stations are stored in the dict a bit differently.
                 station_id = station_ids.get("MEGASHIP/" + station)
-                system_id = system_ids.get(system)
                 if station_id and system_id:
                     if config['verbose']:
                         print("Megaship station, updating system to " + system)
@@ -725,21 +766,24 @@ def process_messages():
                 while not success:
                     try:
                         curs.execute("BEGIN IMMEDIATE")
-                        result = curs.execute(getOldStationInfo, station_id)
+                        result = curs.execute(getOldStationInfo, (station_id,))
                         nm, ls, bm, mps, mk, sy, of, ra, rf, rp, pl, ti = result.fetchone()
                         
                         curs.execute(insertNewStation, (market_id, nm, system_id, ls, bm,
                                                         mps, mk, sy, modified,
                                                         of, ra, rf, rp, pl, ti))
-                        curs.execute(removeOldStation, station_id)
+                        
+                        curs.execute(removeOldStation, (station_id,))
+                        
                         db.commit()
                         success = True
                     except sqlite3.IntegrityError as e:
                         if config['verbose']:
                             print(e)
                         continue
-                    except sqlite3.OperationalError:
+                    except sqlite3.OperationalError as e:
                         print("Database is locked, waiting for access.", end = "\n")
+                        print(e)
                         time.sleep(1)
         station_id = market_id
         
@@ -809,7 +853,7 @@ def process_messages():
                 time.sleep(1)
         
         if config['verbose']:
-            print("Updated " + system + "/" + station + ", station_id:'" + str(station_id) + "', from "+ software + " v" + swVersion)
+            print("Updated " + system + "/" + station + ", station_id:'" + str(station_id) + "', from "+ entry.software + " v" + entry.version)
         else:
             print("Updated " + system + "/" + station)
     
@@ -1137,7 +1181,7 @@ dump_thread = threading.Thread(target = export_dump)
 tdb = tradedb.TradeDB(load = False)
 
 dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().dataDir).resolve()
-eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
+#eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
 
 db_name, item_ids, system_ids, station_ids = update_dicts()
 

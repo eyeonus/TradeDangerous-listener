@@ -29,3 +29,14 @@ transfers.py
 .travis.yml
 setup.*
 tox.ini
+/CHANGELOG.md
+/fix-indent.sh
+/lib64
+/pyproject.toml
+/pyvenv.cfg
+/docs
+/requirements
+/scripts
+/tests
+/tradedangerous
+/tradedangerous-listener-config.json
