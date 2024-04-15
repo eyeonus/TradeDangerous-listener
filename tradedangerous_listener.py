@@ -308,8 +308,7 @@ def get_messages():
 
 def check_update():
     """
-    Checks for updates on the server.
-    Only runs when program configured as client.
+    Checks for updates to the spansh dump.
     """
     global update_busy, db_name, item_ids, system_ids, station_ids
     
