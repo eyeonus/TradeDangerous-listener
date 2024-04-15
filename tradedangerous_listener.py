@@ -1189,11 +1189,10 @@ print("Press CTRL-C at any time to quit gracefully.")
 try:
     listener_thread.start()
     
-    if config['side'] == 'client':
-        update_thread.start()
-        # Give the update checker enough time to see if an update is needed,
-        # before starting the message processor and listings exporter.
-        time.sleep(5)
+    update_thread.start()
+    # Give the update checker enough time to see if an update is needed,
+    # before starting the message processor and listings exporter.
+    time.sleep(5)
     
     process_thread.start()
     
