@@ -7,7 +7,7 @@ import time
 import zlib
 import zmq
 import threading
-import datetime
+from datetime import datetime, timedelta
 import sqlite3
 import csv
 import codecs
@@ -310,7 +310,7 @@ def check_update():
     """
     Checks for updates to the spansh dump.
     """
-    global update_busy, db_name, item_ids, system_ids, station_ids
+    global update_busy, dump_ack, process_ack, live_ack, db_name, item_ids, system_ids, station_ids
     
     # Convert the number from the "check_update_every_x_min" setting, which is in minutes,
     # into easily readable hours and minutes.
@@ -364,18 +364,9 @@ def check_update():
                 print("Error attempting to check for update, no response from server.")
                 continue
             
+            url_time = request.urlopen(SOURCE_URL).getheader("Last-Modified")
+            # dumpModded = datetime.strptime(url_time, "%a, %d %b %Y %H:%M:%S %Z").timestamp()
             '''
-            # Need to parse the "Last-Modified" header into a Unix-epoch, and Python's strptime()
-            # won't work because it is locale-dependent, meaning it would only work in English-
-            # speaking countries.
-            dDL = request.urlopen(SOURCE_URL).getheader("Last-Modified").split(' ')
-            dTL = dDL[4].split(':')
-            
-            dumpDT = datetime.datetime(int(dDL[3]), Months[dDL[2]], int(dDL[1]), \
-                                       hour = int(dTL[0]), minute = int(dTL[1]), second = int(dTL[2]), \
-                                       tzinfo = datetime.timezone.utc)
-            dumpModded = timegm(dumpDT.timetuple())
-            
             # Now that we have the Unix epoch time of the dump file, get the same from the local file.
             if Path.exists(eddbPath / listings_path):
                 localModded = (eddbPath / listings_path).stat().st_mtime
@@ -383,8 +374,9 @@ def check_update():
             
             if localModded < dumpModded:
             '''
-            last_update = request.urlopen(SOURCE_URL).getheader("Last-Modified")
-            if not config['last_update'] or config['last_update'] < last_update:
+            last_modified = datetime.strptime(url_time, "%a, %d %b %Y %H:%M:%S %Z").timestamp()
+            
+            if not config['last_update'] or config['last_update'] < last_modified:
                 # The spansh plugin writes to a prices file, leaving the database available
                 # during processing of the Spansh data, so we can consider the update as not
                 # 'available' until the plugin has finished creating the prices file.
@@ -393,14 +385,15 @@ def check_update():
                 # plugin, we instead tell it NOT to so the busy signal can be flipped on
                 # prior to the importing of the file, using the 'listener' option.
                 print("Spansh update detected, processing update....")
-                trade.main(('trade.py', 'import', '-P', 'spansh', '-O' 'listener,url=' + SOURCE_URL))
+                maxage=(datetime.now() - datetime.fromtimestamp(config["last_update"] + timedelta(hour=1)))/timedelta(1)
+                trade.main(('trade.py', 'import', '-P', 'spansh', '-O' f'listener,url={SOURCE_URL},maxage={maxage}'))
 
                 # TD will fail with an error if the database is in use while it's trying
                 # to do its thing, so we need to make sure that neither of the database
                 # editing methods are doing anything before running.
                 update_busy = True
                 print("Spansh update available, waiting for busy signal acknowledgement before proceeding.")
-                while not (process_ack):
+                while not (dump_ack and process_ack and live_ack):
                     rep = 0
                     if config['debug']:
                         print("Still waiting for acknowledgment. (" + str(rep) + ")", end = '\r')
@@ -412,26 +405,27 @@ def check_update():
                     tdenv = tradeenv.TradeEnv()
                     tdenv.mergeImport = True
                     tdb = tradedb.TradeDB(tdenv, load = False)
+                
                     cache.importDataFromFile(tdb, tdenv, tdenv.tmpDir / Path("spansh.prices"))
+                    
+                    if config['debug']:
+                        print("Updating dictionaries...")
+                    # Since there's been an update, we need to redo all this.
+                    db_name, item_ids, system_ids, station_ids = update_dicts()
+                    
+                    config['last_update'] = last_modified
+                    with open("tradedangerous-listener-config.json", "w") as config_file:
+                        json.dump(config, config_file, indent = 4)
+                    
+                    now = round(time.time(), 0)
                     
                 except Exception as e:
                     print("Error when running update:")
                     print(e)
                 
-                if config['debug']:
-                    print("Updating dictionaries...")
-                # Since there's been an update, we need to redo all this.
-                db_name, item_ids, system_ids, station_ids = update_dicts()
-                
                 print("Update complete, turning off busy signal.")
                 update_busy = False
                 
-                config['last_update'] = last_update
-                with open("tradedangerous-listener-config.json", "w") as config_file:
-                    json.dump(config, config_file, indent = 4)
-                
-                now = round(time.time(), 0)
-                            
             else:
                 print("No update, checking again in " + next_check + ".")
                 now = round(time.time(), 0)
@@ -460,7 +454,7 @@ def load_config():
                             ('side', 'client'),                                                     \
                             ('verbose', True),                                                      \
                             ('debug', False),                                                       \
-                            ('last_update', None),                                                  \
+                            ('last_update', 0),                                                  \
                             ('check_update_every_x_min', 60),                                       \
                             ('export_live_every_x_min', 5),                                         \
                             ('export_dump_every_x_hour', 24),                                       \
@@ -684,11 +678,11 @@ def process_messages():
             print("Busy signal off, message processor resuming.")
         
         if time.time() >= maintenance_time:
-            print("Performing server maintenance tasks." + str(datetime.datetime.now()))
+            print("Performing server maintenance tasks." + str(datetime.now()))
             try:
                 db_execute(db, "VACUUM")
                 db_execute(db, "PRAGMA optimize")
-                print("Server maintenance tasks completed. " + str(datetime.datetime.now()))
+                print("Server maintenance tasks completed. " + str(datetime.now()))
             except Exception as e:
                 print("Error performing maintenance:")
                 print("-----------------------------")
@@ -796,7 +790,7 @@ def process_messages():
                         time.sleep(1)
         station_id = market_id
         
-        start_update = datetime.datetime.now()
+        start_update = datetime.now()
         
         itemList = []
         avgList = []
@@ -888,7 +882,7 @@ def export_live():
     as defined in the configuration file.
     Only runs when program configured as server.
     """
-    global live_ack, live_busy, process_ack, dump_busy
+    global live_ack, live_busy, process_ack, dump_busy, update_busy
     
     tdb = tradedb.TradeDB(load = False)
     db = tdb.getDB()
@@ -904,10 +898,10 @@ def export_live():
         while time.time() < now + (config['export_live_every_x_min'] * _minute):
             if not go:
                 break
-            if dump_busy:
+            if dump_busy or update_busy:
                 print("Live listings exporter acknowledging busy signal.")
                 live_ack = True
-                while dump_busy and go:
+                while (dump_busy or update_busy) and go:
                     time.sleep(1)
                 # Just in case we caught the shutdown command while waiting.
                 if not go:
@@ -924,7 +918,7 @@ def export_live():
         if not go:
             break
         
-        start = datetime.datetime.now()
+        start = datetime.now()
         
         print("Live listings exporter sending busy signal. " + str(start))
         live_busy = True
@@ -948,7 +942,7 @@ def export_live():
             live_busy = False
             continue
         
-        print("Exporting 'listings-live.csv'. (Got listings in " + str(datetime.datetime.now() - start) + ")")
+        print("Exporting 'listings-live.csv'. (Got listings in " + str(datetime.now() - start) + ")")
         with open(str(listings_tmp), "w") as f:
             f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
             lineNo = 1
@@ -964,7 +958,7 @@ def export_live():
                 buy_price = str(result[5])
                 supply = str(result[6])
                 supply_bracket = str(result[7])
-                collected_at = str(timegm(datetime.datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
+                collected_at = str(timegm(datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
                 listing = station_id + "," + commodity_id + "," \
                          +supply + "," + supply_bracket + "," + buy_price + "," \
                          +sell_price + "," + demand + "," + demand_bracket + "," \
@@ -987,7 +981,7 @@ def export_live():
             except:
                 time.sleep(1)
         listings_tmp.rename(listings_file)
-        print("Export completed in " + str(datetime.datetime.now() - start))
+        print("Export completed in " + str(datetime.now() - start))
     
     print("Live listings exporter reporting shutdown.")
 
@@ -998,7 +992,7 @@ def export_dump():
     as defined in the configuration file.
     Only runs when program configured as server.
     """
-    global dump_busy, process_ack, live_ack
+    global dump_ack, dump_busy, process_ack, live_ack
     
     tdb = tradedb.TradeDB(load = False)
     db = tdb.getDB()
@@ -1014,15 +1008,26 @@ def export_dump():
         while time.time() < now + (config['export_dump_every_x_hour'] * _hour):
             if not go:
                 break
-            time.sleep(1)
-        
+            if update_busy:
+                print("Listings exporter acknowledging busy signal.")
+                dump_ack = True
+                while update_busy and go:
+                    time.sleep(1)
+                # Just in case we caught the shutdown command while waiting.
+                if not go:
+                    break
+                dump_ack = False
+                print("Busy signal off, listings exporter resuming.")
+                now = time.time()
+            
+            time.sleep(1)        
         now = time.time()
         # We may be here because we broke out of the waiting loop,
         # so we need to see if we lost go and quit the main loop if so.
         if not go:
             break
         
-        start = datetime.datetime.now()
+        start = datetime.now()
         
         print("Listings exporter sending busy signal. " + str(start))
         dump_busy = True
@@ -1055,7 +1060,7 @@ def export_dump():
             dump_busy = False
             continue
         
-        print("Exporting 'listings.csv'. (Got listings in " + str(datetime.datetime.now() - start) + ")")
+        print("Exporting 'listings.csv'. (Got listings in " + str(datetime.now() - start) + ")")
         with open(str(listings_tmp), "w") as f:
             f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
             lineNo = 1
@@ -1071,7 +1076,7 @@ def export_dump():
                 buy_price = str(result[5])
                 supply = str(result[6])
                 supply_bracket = str(result[7])
-                collected_at = str(timegm(datetime.datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
+                collected_at = str(timegm(datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
                 listing = station_id + "," + commodity_id + "," \
                          +supply + "," + supply_bracket + "," + buy_price + "," \
                          +sell_price + "," + demand + "," + demand_bracket + "," \
@@ -1094,7 +1099,7 @@ def export_dump():
             except:
                 time.sleep(1)
         listings_tmp.rename(listings_file)
-        print("Export completed in " + str(datetime.datetime.now() - start))
+        print("Export completed in " + str(datetime.now() - start))
     
     print("Listings exporter reporting shutdown.")
 
@@ -1168,6 +1173,7 @@ process_ack = False
 live_ack = False
 live_busy = False
 dump_busy = False
+dump_ack = False
 
 go = True
 q = deque()
