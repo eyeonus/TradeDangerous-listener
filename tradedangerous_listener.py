@@ -345,11 +345,12 @@ def check_update():
     url = BASE_URL + LISTINGS
     '''
     
+    startup = True
     while go:
         # Trigger daily EDDB update if the dumps have updated since last run.
         # Otherwise, go to sleep for {config['check_update_every_x_min']} minutes before checking again.
-        if time.time() >= now + (config['check_update_every_x_min'] * _minute):
-            
+        if time.time() >= now + (config['check_update_every_x_min'] * _minute) or startup:
+            startup = False
             response = 0
             tryLeft = 10
             while tryLeft != 0:
@@ -435,8 +436,8 @@ def check_update():
                 print("No update, checking again in " + next_check + ".")
                 now = round(time.time(), 0)
         
-        if config['debug'] and ((round(time.time(), 0) - now) % 60 == 0):
-            print("Update checker is sleeping: " + str(int(now + (config['check_update_every_x_min'] * _minute) - round(time.time(), 0))) + " minutes remain until next check.")
+        if config['debug'] and ((round(time.time(), 0) - now) % 3600 == 0):
+            print("Update checker is sleeping: " + str(int(now + (config['check_update_every_x_min'] * _minute) - round(time.time(), 0)) / 60) + " minutes remain until next check.")
         time.sleep(1)
     
     #If not go:
@@ -712,7 +713,15 @@ def process_messages():
         commodities = entry.commodities
         
         #All the stations should be stored using the market_id.
-        exists = curs.execute("SELECT station_id FROM Station WHERE station_id = ?", (market_id,)).fetchone()
+        success = False
+        while not success:
+            try:
+                exists = curs.execute("SELECT station_id FROM Station WHERE station_id = ?", (market_id,)).fetchone()
+                success = True
+            except sqlite3.OperationalError:
+                print("Database is locked, waiting for access.", end = "\n")
+                time.sleep(1)
+
         
         if not exists:
             station_id = station_ids.get(system + "/" + station)
@@ -760,6 +769,7 @@ def process_messages():
                             print("Database is locked, waiting for access.", end = "\n")
                             time.sleep(1)
                     continue
+                    station_ids[system + "/" + station] = market_id
             if station_id and (station_id != market_id):
                 success = False
                 while not success:
@@ -996,7 +1006,7 @@ def export_dump():
     listings_tmp = listings_file.with_suffix(".tmp")
     print("Listings will be exported to: \n\t" + str(listings_file))
     
-    now = time.time()
+    now = time.time() - (config['export_dump_every_x_hour'] * _hour)
     while go:
         # Wait until the time specified in the "export_dump_every_x_hour" config
         # before doing an export, watch for busy signal or shutdown signal
