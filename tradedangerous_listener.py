@@ -1187,6 +1187,13 @@ q = deque()
 config = load_config()
 validate_config()
 
+# Make sure the export folder exists
+try:
+    Path(config['export_path']).mkdir()
+except FileExistsError:
+    pass
+
+
 # get and process trade data messages from EDDN
 listener_thread = threading.Thread(target = get_messages)
 process_thread = threading.Thread(target = process_messages)
