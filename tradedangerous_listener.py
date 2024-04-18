@@ -1217,6 +1217,7 @@ try:
         live_thread.start()
     else:
         live_ack = True
+        dump_ack - True
     
     while True:
         time.sleep(1)
