@@ -385,8 +385,15 @@ def check_update():
                 # plugin, we instead tell it NOT to so the busy signal can be flipped on
                 # prior to the importing of the file, using the 'listener' option.
                 print("Spansh update detected, processing update....")
+                
                 maxage=((datetime.now() - datetime.fromtimestamp(config["last_update"])) + timedelta(hours=1))/timedelta(1)
-                trade.main(('trade.py', 'import', '-P', 'spansh', '-O' f'listener,url={SOURCE_URL},maxage={maxage}'))
+                options = f'listener,url={SOURCE_URL},maxage={maxage}'
+                if config['debug]']:
+                    options += ' -w'
+                if config['verbose]']:
+                    options += ' -v'
+                
+                trade.main(('trade.py', 'import', '-P', 'spansh', '-O', options))
 
                 # TD will fail with an error if the database is in use while it's trying
                 # to do its thing, so we need to make sure that neither of the database
