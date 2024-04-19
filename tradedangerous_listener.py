@@ -387,13 +387,15 @@ def check_update():
                 print("Spansh update detected, processing update....")
                 
                 maxage=((datetime.now() - datetime.fromtimestamp(config["last_update"])) + timedelta(hours=1))/timedelta(1)
-                options = f'listener,url={SOURCE_URL},maxage={maxage}'
-                if config['debug]']:
-                    options += ' -w'
-                if config['verbose]']:
-                    options += ' -vvv'
+                options = '-'
+                if config['debug']:
+                    options += 'w'
+                if config['verbose']:
+                    options += 'vvv'
+                if options == '-':
+                 options = ''
                 
-                trade.main(('trade.py', 'import', '-P', 'spansh', '-O', options))
+                trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'listener,url={SOURCE_URL},maxage={maxage}', options))
 
                 # TD will fail with an error if the database is in use while it's trying
                 # to do its thing, so we need to make sure that neither of the database
@@ -976,6 +978,8 @@ def export_live():
                 lineNo += 1
         
         del results
+        if config['verbose']:
+            print('Live listings exporter finished with database, releasing lock.')
         live_busy = False
         
         # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it.
@@ -1009,89 +1013,75 @@ def export_dump():
     listings_tmp = listings_file.with_suffix(".tmp")
     print("Listings will be exported to: \n\t" + str(listings_file))
     
-    now = time.time() - (config['export_dump_every_x_hour'] * _hour)
-    while go:
-        # Wait until the time specified in the "export_dump_every_x_hour" config
-        # before doing an export, watch for busy signal or shutdown signal
-        # while waiting.
-        while time.time() < now + (config['export_dump_every_x_hour'] * _hour):
-            if not go:
-                break
-                now = time.time()
-            
-            time.sleep(1)        
-        now = time.time()
-        # We may be here because we broke out of the waiting loop,
-        # so we need to see if we lost go and quit the main loop if so.
+    start = datetime.now()
+    
+    print("Listings exporter sending busy signal. " + str(start))
+    dump_busy = True
+    
+    while not (process_ack and live_ack):
         if not go:
             break
-        
-        start = datetime.now()
-        
-        print("Listings exporter sending busy signal. " + str(start))
-        dump_busy = True
-        
-        while not (process_ack and live_ack):
-            if not go:
-                break
-        print("Busy signal acknowledged, getting listings for export.")
+        time.sleep(1)
+    
+    print("Busy signal acknowledged, getting listings for export.")
+    success = False
+    while not success:
         try:
             # Reset the live (i.e. since the last dump) flag for all StationItems
             db_execute(db, "UPDATE StationItem SET from_live = 0")
-            success = False
-            while not success:
-                try:
-                    db.commit()
-                    success = True
-                except sqlite3.OperationalError:
-                    print("(commit) Database is locked, waiting for access.", end = "\r")
-                    time.sleep(1)
-            
+            db.commit()
             cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem ORDER BY station_id, item_id"))
             results = list(cursor)
+            success = True
+        except sqlite3.OperationalError:
+            print("(commit) Database is locked, waiting for access.", end = "\r")
+            time.sleep(1)
         except sqlite3.DatabaseError as e:
+            print("Aborting export:")
             print(e)
             dump_busy = False
-            continue
+            return
         except AttributeError as e:
+            print("Aborting export:")
             print("Got Attribute error trying to fetch StationItems: " + str(e))
             print(cursor)
             dump_busy = False
-            continue
-        
-        print("Exporting 'listings.csv'. (Got listings in " + str(datetime.now() - start) + ")")
-        with open(str(listings_tmp), "w") as f:
-            f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
-            lineNo = 1
-            for result in results:
-                # If we lose go during export, we need to abort.
-                if not go:
-                    break
-                station_id = str(result[0])
-                commodity_id = str(result[1])
-                sell_price = str(result[2])
-                demand = str(result[3])
-                demand_bracket = str(result[4])
-                buy_price = str(result[5])
-                supply = str(result[6])
-                supply_bracket = str(result[7])
-                collected_at = str(timegm(datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
-                listing = station_id + "," + commodity_id + "," \
-                         +supply + "," + supply_bracket + "," + buy_price + "," \
-                         +sell_price + "," + demand + "," + demand_bracket + "," \
-                         +collected_at
-                f.write(str(lineNo) + "," + listing + "\n")
-                lineNo += 1
-        
-        del results
-        dump_busy = False
-        
-        # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it.
-        if not go:
-            listings_tmp.unlink()
-            print("Export aborted, received shutdown signal.")
-            break
-        
+            return
+    
+    print("Exporting 'listings.csv'. (Got listings in " + str(datetime.now() - start) + ")")
+    with open(str(listings_tmp), "w") as f:
+        f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
+        lineNo = 1
+        for result in results:
+            # If we lose go during export, we need to abort.
+            if not go:
+                break
+            station_id = str(result[0])
+            commodity_id = str(result[1])
+            sell_price = str(result[2])
+            demand = str(result[3])
+            demand_bracket = str(result[4])
+            buy_price = str(result[5])
+            supply = str(result[6])
+            supply_bracket = str(result[7])
+            collected_at = str(timegm(datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
+            listing = station_id + "," + commodity_id + "," \
+                        + supply + "," + supply_bracket + "," + buy_price + "," \
+                        + sell_price + "," + demand + "," + demand_bracket + "," \
+                        + collected_at
+            f.write(str(lineNo) + "," + listing + "\n")
+            lineNo += 1
+    
+    del results
+    if config['verbose']:
+        print('Listings exporter finished with database, releasing lock.')
+    dump_busy = False
+    
+    # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it.
+    if not go:
+        listings_tmp.unlink()
+        print("Export aborted, received shutdown signal.")
+    else:
         while listings_file.exists():
             try:
                 listings_file.unlink()
@@ -1099,9 +1089,6 @@ def export_dump():
                 time.sleep(1)
         listings_tmp.rename(listings_file)
         print("Export completed in " + str(datetime.now() - start))
-    
-    print("Listings exporter reporting shutdown.")
-
 
 def update_dicts():
     # We'll use this to get the fdev_id from the 'symbol', AKA commodity['name'].lower()
