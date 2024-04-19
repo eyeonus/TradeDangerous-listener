@@ -391,7 +391,7 @@ def check_update():
                 if config['debug]']:
                     options += ' -w'
                 if config['verbose]']:
-                    options += ' -v'
+                    options += ' -vvv'
                 
                 trade.main(('trade.py', 'import', '-P', 'spansh', '-O', options))
 
