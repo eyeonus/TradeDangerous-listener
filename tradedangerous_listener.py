@@ -310,7 +310,7 @@ def check_update():
     """
     Checks for updates to the spansh dump.
     """
-    global update_busy, dump_ack, process_ack, live_ack, db_name, item_ids, system_ids, station_ids
+    global update_busy, process_ack, live_ack, db_name, item_ids, system_ids, station_ids
     
     # Convert the number from the "check_update_every_x_min" setting, which is in minutes,
     # into easily readable hours and minutes.
@@ -400,7 +400,7 @@ def check_update():
                 # editing methods are doing anything before running.
                 update_busy = True
                 print("Spansh update available, waiting for busy signal acknowledgement before proceeding.")
-                while not (dump_ack and process_ack and live_ack):
+                while not (process_ack and live_ack):
                     rep = 0
                     if config['debug']:
                         print("Still waiting for acknowledgment. (" + str(rep) + ")", end = '\r')
@@ -432,6 +432,8 @@ def check_update():
                 
                 print("Update complete, turning off busy signal.")
                 update_busy = False
+                if config['side'] == 'server':
+                    export_dump()
                 
             else:
                 print("No update, checking again in " + next_check + ".")
@@ -999,7 +1001,7 @@ def export_dump():
     as defined in the configuration file.
     Only runs when program configured as server.
     """
-    global dump_ack, dump_busy, process_ack, live_ack
+    global dump_busy, process_ack, live_ack
     
     tdb = tradedb.TradeDB(load = False)
     db = tdb.getDB()
@@ -1015,16 +1017,6 @@ def export_dump():
         while time.time() < now + (config['export_dump_every_x_hour'] * _hour):
             if not go:
                 break
-            if update_busy:
-                print("Listings exporter acknowledging busy signal.")
-                dump_ack = True
-                while update_busy and go:
-                    time.sleep(1)
-                # Just in case we caught the shutdown command while waiting.
-                if not go:
-                    break
-                dump_ack = False
-                print("Busy signal off, listings exporter resuming.")
                 now = time.time()
             
             time.sleep(1)        
@@ -1180,7 +1172,6 @@ process_ack = False
 live_ack = False
 live_busy = False
 dump_busy = False
-dump_ack = False
 
 go = True
 q = deque()
@@ -1205,7 +1196,7 @@ update_thread = threading.Thread(target = check_update)
 # market data updated since last dump
 live_thread = threading.Thread(target = export_live)
 # performs dump, resetting all live flags
-dump_thread = threading.Thread(target = export_dump)
+# dump_thread = threading.Thread(target = export_dump)
 
 tdb = tradedb.TradeDB(load = False)
 
@@ -1226,12 +1217,11 @@ try:
     process_thread.start()
     
     if config['side'] == 'server':
-        dump_thread.start()
+        # dump_thread.start()
         time.sleep(1)
         live_thread.start()
     else:
         live_ack = True
-        dump_ack - True
     
     while True:
         time.sleep(1)
