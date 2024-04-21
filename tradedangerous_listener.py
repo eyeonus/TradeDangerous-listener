@@ -407,6 +407,8 @@ def check_update():
                                     "System",
                                     "Upgrade",
                                     "UpgradeVendor",
+                                    "FDevShipyard",
+                                    "FDevOutfitting",
                                 ]:
                         _, path = csvexport.exportTableToFile( tdb, tdenv, table )
                         if Path(f'{config["export_path"]}\{table}.csv').resolve() != dataPath.resolve():
