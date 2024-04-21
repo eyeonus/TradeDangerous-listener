@@ -398,11 +398,6 @@ def check_update():
                 try:
                     trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'listener,url={SOURCE_URL},maxage={maxage}', options))
                                         
-                    if config['debug']:
-                        print("Updating dictionaries...")
-                    # Since there's been an update, we need to redo all this.
-                    db_name, item_ids, system_ids, station_ids = update_dicts()
-                    
                     for table in ["Category",
                                     "Item",
                                     "RareItem",
@@ -417,6 +412,11 @@ def check_update():
                         if Path(f'{config["export_path"]}\{table}.csv').resolve() != dataPath.resolve():
                             os.copyfile(path, Path(f'{config["export_path"]}\{table}.csv').resolve())
 
+                    if config['debug']:
+                        print("Updating dictionaries...")
+                    # Since there's been an update, we need to redo all this.
+                    db_name, item_ids, system_ids, station_ids = update_dicts()
+                    
                     config['last_update'] = last_modified
                     with open("tradedangerous-listener-config.json", "w") as config_file:
                         json.dump(config, config_file, indent = 4)
@@ -1182,8 +1182,10 @@ tdb = tradedb.TradeDB(load = False)
 
 dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve()
 #eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
-
-db_name, item_ids, system_ids, station_ids = update_dicts()
+try:
+    db_name, item_ids, system_ids, station_ids = update_dicts()
+except:
+    pass
 
 print("Press CTRL-C at any time to quit gracefully.")
 try:
