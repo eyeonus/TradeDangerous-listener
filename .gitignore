@@ -40,3 +40,4 @@ tox.ini
 /tests
 /tradedangerous
 /tradedangerous-listener-config.json
+/tradegui.py

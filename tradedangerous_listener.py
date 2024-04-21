@@ -295,7 +295,7 @@ def db_execute(db, sql_cmd, args = None):
                     raise sqlite3.OperationalError(e)
                 else:
                     print("Database is locked, waiting for access.", end = "\n")
-                    print(e)
+                    print(f'Error message: {e}')
                     time.sleep(1)
     return result
 
@@ -331,19 +331,16 @@ def check_update():
     dumpModded = 0
     localModded = 0
     
-    '''
-    # The following values only need to be assigned once, no need to be in the while loop.
-    BASE_URL = plugins.eddblink_plug.BASE_URL
-    LISTINGS = "listings.csv"
-    listings_path = Path(LISTINGS)
-    '''
+    # # The following values only need to be assigned once, no need to be in the while loop.
+    # BASE_URL = plugins.eddblink_plug.BASE_URL
+    # LISTINGS = "listings.csv"
+    # listings_path = Path(LISTINGS)
+    
     Months = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6, 'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
     SOURCE_URL = 'https://downloads.spansh.co.uk/galaxy_stations.json'
     
-    '''
-    request.urlopen(BASE_URL + LISTINGS)
-    url = BASE_URL + LISTINGS
-    '''
+    # request.urlopen(BASE_URL + LISTINGS)
+    # url = BASE_URL + LISTINGS
     
     startup = True
     while go:
@@ -366,26 +363,16 @@ def check_update():
             
             url_time = request.urlopen(SOURCE_URL).getheader("Last-Modified")
             # dumpModded = datetime.strptime(url_time, "%a, %d %b %Y %H:%M:%S %Z").timestamp()
-            '''
-            # Now that we have the Unix epoch time of the dump file, get the same from the local file.
-            if Path.exists(eddbPath / listings_path):
-                localModded = (eddbPath / listings_path).stat().st_mtime
-            
-            
-            if localModded < dumpModded:
-            '''
+            # # Now that we have the Unix epoch time of the dump file, get the same from the local file.
+            # if Path.exists(eddbPath / listings_path):
+            #     localModded = (eddbPath / listings_path).stat().st_mtime
+            #
+            #
+            # if localModded < dumpModded:
+
             last_modified = datetime.strptime(url_time, "%a, %d %b %Y %H:%M:%S %Z").timestamp()
             
             if not config['last_update'] or config['last_update'] < last_modified:
-                # The spansh plugin writes to a prices file, leaving the database available
-                # during processing of the Spansh data, so we can consider the update as not
-                # 'available' until the plugin has finished creating the prices file.
-                # NOTE: plugin by default imports the resulting prices file internally, but
-                # since we can't trigger the busy signal from within the execution of the
-                # plugin, we instead tell it NOT to so the busy signal can be flipped on
-                # prior to the importing of the file, using the 'listener' option.
-                print("Spansh update detected, processing update....")
-                
                 maxage=((datetime.now() - datetime.fromtimestamp(config["last_update"])) + timedelta(hours=1))/timedelta(1)
                 options = '-'
                 if config['debug']:
@@ -393,10 +380,8 @@ def check_update():
                 if config['verbose']:
                     options += 'vvv'
                 if options == '-':
-                 options = ''
+                    options = ''
                 
-                trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'listener,url={SOURCE_URL},maxage={maxage}', options))
-
                 # TD will fail with an error if the database is in use while it's trying
                 # to do its thing, so we need to make sure that neither of the database
                 # editing methods are doing anything before running.
@@ -411,17 +396,26 @@ def check_update():
                 
                 print("Busy signal acknowledged, performing update.")
                 try:
-                    tdenv = tradeenv.TradeEnv()
-                    tdenv.mergeImport = True
-                    tdb = tradedb.TradeDB(tdenv, load = False)
-                
-                    cache.importDataFromFile(tdb, tdenv, tdenv.tmpDir / Path("spansh.prices"))
-                    
+                    trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'listener,url={SOURCE_URL},maxage={maxage}', options))
+                                        
                     if config['debug']:
                         print("Updating dictionaries...")
                     # Since there's been an update, we need to redo all this.
                     db_name, item_ids, system_ids, station_ids = update_dicts()
                     
+                    for table in ["Category",
+                                    "Item",
+                                    "RareItem",
+                                    "Ship",
+                                    "ShipVendor",
+                                    "Station",
+                                    "System",
+                                    "Upgrade",
+                                    "UpgradeVendor",
+                                ]:
+                        _, path = csvexport.exportTableToFile( tdb, tdenv, table )
+                        os.copyfile(path, Path(f'{config["export_path"]}\{table}.csv'))
+
                     config['last_update'] = last_modified
                     with open("tradedangerous-listener-config.json", "w") as config_file:
                         json.dump(config, config_file, indent = 4)
@@ -548,39 +542,37 @@ def validate_config():
     if config.get('plugin_options'):
         valid = False
         config_file = config_file.replace('"plugin_options"', '"plugin_options_invalid"')
-        
-    '''
-    # 'plugin_options': For this one, rather than completely replace invalid
-    # values with the default, check to see if any of the values are valid
-    # and keep those, prepending the default values to the setting if they
-    # aren't already in the setting.
-
-    if isinstance(config['plugin_options'], str):
-        options = config['plugin_options'].split(',')
-        valid_options = ""
-        cmdenv = commands.CommandIndex().parse
-        plugin_options = plugins.load(cmdenv(['trade', 'import', '--plug', 'eddblink', '-O', 'help']).plug, "ImportPlugin").pluginOptions.keys()
-        
-        for option in options:
-            if option in plugin_options:
-                if valid_options != "":
-                    valid_options += ","
-                valid_options += option
-            else:
-                valid = False
-        
-        if not valid:
-            if valid_options.find("force") == -1:
-                valid_options = "force," + valid_options
-            if valid_options.find("skipvend") == -1:
-                valid_options = "skipvend," + valid_options
-            if valid_options.find("all") == -1:
-                valid_options = "all," + valid_options
-            config_file = config_file.replace(config['plugin_options'], valid_options)
-    else:
-        valid = False
-        config_file = config_file.replace('"plugin_options"', '"plugin_options_invalid"')
-    '''
+    
+    # # 'plugin_options': For this one, rather than completely replace invalid
+    # # values with the default, check to see if any of the values are valid
+    # # and keep those, prepending the default values to the setting if they
+    # # aren't already in the setting.
+    #
+    # if isinstance(config['plugin_options'], str):
+    #     options = config['plugin_options'].split(',')
+    #     valid_options = ""
+    #     cmdenv = commands.CommandIndex().parse
+    #     plugin_options = plugins.load(cmdenv(['trade', 'import', '--plug', 'eddblink', '-O', 'help']).plug, "ImportPlugin").pluginOptions.keys()
+    #
+    #     for option in options:
+    #         if option in plugin_options:
+    #             if valid_options != "":
+    #                 valid_options += ","
+    #             valid_options += option
+    #         else:
+    #             valid = False
+    #
+    #     if not valid:
+    #         if valid_options.find("force") == -1:
+    #             valid_options = "force," + valid_options
+    #         if valid_options.find("skipvend") == -1:
+    #             valid_options = "skipvend," + valid_options
+    #         if valid_options.find("all") == -1:
+    #             valid_options = "all," + valid_options
+    #         config_file = config_file.replace(config['plugin_options'], valid_options)
+    # else:
+    #     valid = False
+    #     config_file = config_file.replace('"plugin_options"', '"plugin_options_invalid"')
     
     # 'check_update_every_x_min' >= 1 && <= 1440 (1 day)
     if isinstance(config['check_update_every_x_min'], int):
