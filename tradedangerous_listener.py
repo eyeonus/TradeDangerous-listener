@@ -1072,7 +1072,6 @@ def export_dump():
         print("Export completed in " + str(datetime.now() - start))
 
 def update_dicts():
-    global db_name, item_ids, system_ids, station_ids
     # We'll use this to get the fdev_id from the 'symbol', AKA commodity['name'].lower()
     db_name = dict()
     edcd_source = 'https://raw.githubusercontent.com/EDCD/FDevIDs/master/commodity.csv'
@@ -1175,7 +1174,8 @@ dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve(
 global db_name, item_ids, system_ids, station_ids
 try:
     db_name, item_ids, system_ids, station_ids = update_dicts()
-except:
+except Exception as e:
+    print(str(e))
     pass
 
 print("Press CTRL-C at any time to quit gracefully.")
