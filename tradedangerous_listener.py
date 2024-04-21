@@ -628,7 +628,7 @@ def validate_config():
 
 
 def process_messages():
-    global process_ack, update_busy, dump_busy, live_busy
+    global process_ack, update_busy, dump_busy, live_busy, db_name, item_ids, system_ids, station_ids
     
     tdb = tradedb.TradeDB(load = False)
     db = tdb.getDB()
@@ -1086,6 +1086,7 @@ def export_dump():
         print("Export completed in " + str(datetime.now() - start))
 
 def update_dicts():
+    global db_name, item_ids, system_ids, station_ids
     # We'll use this to get the fdev_id from the 'symbol', AKA commodity['name'].lower()
     db_name = dict()
     edcd_source = 'https://raw.githubusercontent.com/EDCD/FDevIDs/master/commodity.csv'
