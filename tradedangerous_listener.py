@@ -414,7 +414,8 @@ def check_update():
                                     "UpgradeVendor",
                                 ]:
                         _, path = csvexport.exportTableToFile( tdb, tdenv, table )
-                        os.copyfile(path, Path(f'{config["export_path"]}\{table}.csv'))
+                        if Path(f'{config["export_path"]}\{table}.csv').resolve() != dataPath.resolve():
+                            os.copyfile(path, Path(f'{config["export_path"]}\{table}.csv').resolve())
 
                     config['last_update'] = last_modified
                     with open("tradedangerous-listener-config.json", "w") as config_file:
@@ -1179,7 +1180,7 @@ live_thread = threading.Thread(target = export_live)
 
 tdb = tradedb.TradeDB(load = False)
 
-dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().dataDir).resolve()
+dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve()
 #eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
 
 db_name, item_ids, system_ids, station_ids = update_dicts()
