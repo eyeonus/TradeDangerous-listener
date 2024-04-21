@@ -398,21 +398,7 @@ def check_update():
                 try:
                     trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'listener,url={SOURCE_URL},maxage={maxage}', options))
                                         
-                    for table in ["Category",
-                                    "Item",
-                                    "RareItem",
-                                    "Ship",
-                                    "ShipVendor",
-                                    "Station",
-                                    "System",
-                                    "Upgrade",
-                                    "UpgradeVendor",
-                                    "FDevShipyard",
-                                    "FDevOutfitting",
-                                ]:
-                        _, path = csvexport.exportTableToFile( tdb, tdenv, table )
-                        if Path(f'{config["export_path"]}\{table}.csv').resolve() != dataPath.resolve():
-                            os.copyfile(path, Path(f'{config["export_path"]}\{table}.csv').resolve())
+                    trade.main(('trade.py', 'export', '--path', f'{config["export_path"]}'))
 
                     if config['debug']:
                         print("Updating dictionaries...")
@@ -1185,6 +1171,8 @@ tdb = tradedb.TradeDB(load = False)
 
 dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve()
 #eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath.resolve()
+
+global db_name, item_ids, system_ids, station_ids
 try:
     db_name, item_ids, system_ids, station_ids = update_dicts()
 except:
