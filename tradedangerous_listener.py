@@ -310,7 +310,7 @@ def check_update():
     """
     Checks for updates to the spansh dump.
     """
-    global update_busy, process_ack, live_ack, db_name, item_ids, system_ids, station_ids
+    global update_busy, dump_busy, process_ack, live_ack, db_name, item_ids, system_ids, station_ids
     
     # Convert the number from the "check_update_every_x_min" setting, which is in minutes,
     # into easily readable hours and minutes.
@@ -396,7 +396,7 @@ def check_update():
                 
                 print("Busy signal acknowledged, performing update.")
                 try:
-                    trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'listener,url={SOURCE_URL},maxage={maxage}', options))
+                    trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'url={SOURCE_URL},maxage={maxage}', options))
                                         
                     trade.main(('trade.py', 'export', '--path', f'{config["export_path"]}'))
 
@@ -414,8 +414,12 @@ def check_update():
                 except Exception as e:
                     print("Error when running update:")
                     print(e)
+                    update_busy = False
+                    continue
                 
                 print("Update complete, turning off busy signal.")
+                if config['side'] == 'server':
+                    dump_busy = True
                 update_busy = False
                 if config['side'] == 'server':
                     export_dump()
@@ -923,7 +927,7 @@ def export_live():
         print("Busy signal acknowledged, getting live listings for export.")
         try:
             cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem WHERE from_live = 1 ORDER BY station_id, item_id"))
-            results = list(cursor)
+            # results = list(cursor)
         except sqlite3.DatabaseError as e:
             print(e)
             live_busy = False
@@ -938,7 +942,7 @@ def export_live():
         with open(str(listings_tmp), "w") as f:
             f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
             lineNo = 1
-            for result in results:
+            for result in cursor:
                 # If we lose go during export, we need to abort.
                 if not go:
                     break
@@ -958,7 +962,7 @@ def export_live():
                 f.write(str(lineNo) + "," + listing + "\n")
                 lineNo += 1
         
-        del results
+        # del results
         if config['verbose']:
             print('Live listings exporter finished with database, releasing lock.')
         live_busy = False
@@ -1012,7 +1016,7 @@ def export_dump():
             db_execute(db, "UPDATE StationItem SET from_live = 0")
             db.commit()
             cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem ORDER BY station_id, item_id"))
-            results = list(cursor)
+            # results = list(cursor)
             success = True
         except sqlite3.OperationalError:
             print("(commit) Database is locked, waiting for access.", end = "\r")
@@ -1033,7 +1037,7 @@ def export_dump():
     with open(str(listings_tmp), "w") as f:
         f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
         lineNo = 1
-        for result in results:
+        for result in cursor:
             # If we lose go during export, we need to abort.
             if not go:
                 break
@@ -1053,7 +1057,7 @@ def export_dump():
             f.write(str(lineNo) + "," + listing + "\n")
             lineNo += 1
     
-    del results
+    # del results
     if config['verbose']:
         print('Listings exporter finished with database, releasing lock.')
     dump_busy = False
