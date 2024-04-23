@@ -908,7 +908,6 @@ def export_live():
             
             time.sleep(1)
         
-        now = time.time()
         # We may be here because we broke out of the waiting loop,
         # so we need to see if we lost go and quit the main loop if so.
         if not go:
@@ -981,12 +980,13 @@ def export_live():
         listings_tmp.rename(listings_file)
         print("Export completed in " + str(datetime.now() - start))
     
+        now = time.time()
     print("Live listings exporter reporting shutdown.")
 
 
 def export_dump():
     """
-    Creates a "listings-live.csv" file in "export_path" every X seconds,
+    Creates a "listings.csv" file in "export_path" every X seconds,
     as defined in the configuration file.
     Only runs when program configured as server.
     """
