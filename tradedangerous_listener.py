@@ -19,8 +19,6 @@ import sys
 # ssl._create_default_https_context = ssl._create_unverified_context
 
 try:
-
-try:
     import cache
     import trade
     import tradedb
