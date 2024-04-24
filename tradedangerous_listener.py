@@ -12,7 +12,13 @@ import sqlite3
 import csv
 import codecs
 import sys
-#from builtins import False
+
+# Make things easier for Tromador.
+# import ssl
+#
+# ssl._create_default_https_context = ssl._create_unverified_context
+
+try:
 
 try:
     import cache
@@ -399,6 +405,8 @@ def check_update():
                     trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'url={SOURCE_URL},maxage={maxage}', options))
                                         
                     trade.main(('trade.py', 'export', '--path', f'{config["export_path"]}'))
+                    if config['side'] == 'server':
+                        trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', 'prices'))
 
                     if config['debug']:
                         print("Updating dictionaries...")
