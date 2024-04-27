@@ -382,7 +382,7 @@ def check_update():
                 if config['debug']:
                     options += 'w'
                 if config['verbose']:
-                    options += 'vvv'
+                    options += 'vv'
                 if options == '-':
                     options = ''
                 
@@ -752,7 +752,7 @@ def process_messages():
                     while not success:
                         try:
                             curs.execute("BEGIN IMMEDIATE")
-                            curs.execute(insertNewStation, (market_id, station, system_id, 1,
+                            curs.execute(insertNewStation, (market_id, station, system_id, 999999,
                                                             '?', '?', 'Y', '?', modified, '?',
                                                             '?', '?', '?', '?', 0))
                             db.commit()
