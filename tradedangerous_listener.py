@@ -403,8 +403,8 @@ def check_update():
                     trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'url={SOURCE_URL},maxage={maxage}', options))
                                         
                     trade.main(('trade.py', 'export', '--path', f'{config["export_path"]}'))
-                    if config['side'] == 'server':
-                        trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', 'prices'))
+                    # if config['side'] == 'server':
+                    #     trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', 'prices'))
 
                     if config['debug']:
                         print("Updating dictionaries...")
