@@ -658,7 +658,7 @@ def process_messages():
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     removeOldStation = "DELETE FROM Station WHERE station_id = ?"
-    moveStationToNewSystem = "UPDATE Station SET system_id = ? WHERE station_id = ?"
+    moveStationToNewSystem = "UPDATE Station SET system_id = ?, name = ? WHERE station_id = ?"
     
     # We want to perform some automatic DB maintenance when running for long periods.
     maintenance_time = time.time() + (config['db_maint_every_x_hour'] * _hour)
@@ -733,7 +733,7 @@ def process_messages():
                     while not success:
                         try:
                             curs.execute("BEGIN IMMEDIATE")
-                            curs.execute(moveStationToNewSystem, (system_id, station_id))
+                            curs.execute(moveStationToNewSystem, (system_id, entry.station, station_id))
                             db.commit()
                             success = True
                         except sqlite3.IntegrityError:
@@ -752,7 +752,7 @@ def process_messages():
                     while not success:
                         try:
                             curs.execute("BEGIN IMMEDIATE")
-                            curs.execute(insertNewStation, (market_id, station, system_id, 999999,
+                            curs.execute(insertNewStation, (market_id, entry.station, system_id, 999999,
                                                             '?', '?', 'Y', '?', modified, '?',
                                                             '?', '?', '?', '?', 0))
                             db.commit()
