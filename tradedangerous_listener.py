@@ -347,6 +347,10 @@ def check_update():
     # url = BASE_URL + LISTINGS
     
     startup = True
+    
+    tdb = tradedb.TradeDB(load = False)
+    db = tdb.getDB()
+    
     while go:
         # Trigger daily EDDB update if the dumps have updated since last run.
         # Otherwise, go to sleep for {config['check_update_every_x_min']} minutes before checking again.
@@ -428,6 +432,9 @@ def check_update():
                     dump_busy = True
                 update_busy = False
                 if config['side'] == 'server':
+                    ##TODO: Purge StationItems older than a month
+                    db_execute(db, "DELETE FROM StationItem as si WHERE JULIANDAY('NOW') - JULIANDAY(si.modified) > 30")
+                    db.commit()
                     export_dump()
                 
             else:
