@@ -1233,14 +1233,16 @@ if config['client_options'] == 'clean':
         json.dump(config, config_file, indent=4)
 
 validate_config()
-
+if config['verbose']:
+    print("Config loaded")
 # Make sure the export folder exists
 try:
     Path(config['export_path']).mkdir()
 except FileExistsError:
     pass
 
-
+if config['verbose']:
+    print("Initializing threads")
 # get and process trade data messages from EDDN
 listener_thread = threading.Thread(target = get_messages)
 process_thread = threading.Thread(target = process_messages)
@@ -1255,11 +1257,15 @@ else:
 # (server) export market data updated since last source update
 live_thread = threading.Thread(target = export_live)
 
+if config['verbose']:
+    print("Loading TradeDB")
 tdb = tradedb.TradeDB(load = False)
 
 dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve()
 eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath
 
+if config['verbose']:
+    print("Updating dicts")
 global db_name, item_ids, system_ids, station_ids
 try:
     db_name, item_ids, system_ids, station_ids = update_dicts()
@@ -1267,18 +1273,30 @@ except Exception as e:
     print(str(e))
     pass
 
+if config['verbose']:
+    print("Startup process completed.")
+
 print("Press CTRL-C at any time to quit gracefully.")
 try:
+    if config['verbose']:
+        print("Starting update thread")
     update_thread.start()
     # Give the update checker enough time to see if an
     # update is needed before starting the other threads
     time.sleep(5)
-    
+
+    if config['verbose']:
+        print("Starting listener thread")
     listener_thread.start()
+
+    if config['verbose']:
+        print("Starting processor thread")
     process_thread.start()
     
     if config['side'] == 'server':
         time.sleep(1)
+        if config['verbose']:
+            print("Starting live exporter thread")
         live_thread.start()
     else:
         live_ack = True
