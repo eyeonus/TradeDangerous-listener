@@ -947,7 +947,12 @@ def fetchIter(cursor, arraysize = 1000):
     and speed up the time to retrieve the results dramatically.
     """
     while True:
-        results = cursor.fetchmany(arraysize)
+        try:
+            results = cursor.fetchmany(arraysize)
+        except AttributeError as e:
+            print(e)
+            break
+
         if not results:
             break
         for result in results:
@@ -1018,7 +1023,7 @@ def export_live():
             print(cursor)
             live_busy = False
             continue
-        
+
         print(f"Exporting 'listings-live.csv'. (Got listings in {datetime.now() - start})")
         with open(str(listings_tmp), "w") as f:
             f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
