@@ -37,7 +37,7 @@ from packaging.version import Version
 
 _minute = 60
 _hour = 3600
-
+_SOURCE_URL = 'https://downloads.spansh.co.uk/galaxy_stations.json'
 
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
 #
@@ -319,7 +319,12 @@ def check_update():
     Checks for updates to the spansh dump.
     """
     global update_busy, dump_busy, process_ack, live_ack, db_name, item_ids, system_ids, station_ids
-    
+
+    tdb = tradedb.TradeDB(load = False)
+    db = tdb.getDB()
+
+    _SPANSH_FILE = Path(tdb.tdenv.tmpDir, "galaxy_stations.json")
+
     # Convert the number from the "check_update_every_x_min" setting, which is in minutes,
     # into easily readable hours and minutes.
     h, m = divmod(config['check_update_every_x_min'], 60)
@@ -339,23 +344,18 @@ def check_update():
     dumpModded = 0
     localModded = 0
 
-    SOURCE_URL = 'https://downloads.spansh.co.uk/galaxy_stations.json'
-    
     startup = True
-    
-    tdb = tradedb.TradeDB(load = False)
-    db = tdb.getDB()
-    
+
     while go:
         # Trigger daily source update if the dumps have updated since last run.
         # Otherwise, go to sleep for {config['check_update_every_x_min']} minutes before checking again.
         if time.time() >= now + (config['check_update_every_x_min'] * _minute) or startup:
             startup = False
-            response = 0
+            response = None
             tryLeft = 10
             while tryLeft != 0:
                 try:
-                    response = request.urlopen(SOURCE_URL)
+                    response = request.urlopen(_SOURCE_URL)
                     tryLeft = 0
                 except:
                     tryLeft -= 1
@@ -364,10 +364,26 @@ def check_update():
                 print("Error attempting to check for update, no response from server.")
                 continue
             
-            url_time = request.urlopen(SOURCE_URL).getheader("Last-Modified")
+            url_time = response.getheader("Last-Modified")
             last_modified = datetime.strptime(url_time, "%a, %d %b %Y %H:%M:%S %Z").timestamp()
-            
+
             if not config['last_update'] or config['last_update'] < last_modified:
+                local_mod_time = 0 if not _SPANSH_FILE.exists() else _SPANSH_FILE.stat().st_mtime
+
+                if config['verbose']:
+                    print(f'local_mod_time: {local_mod_time}, last_modified: {last_modified}')
+                if local_mod_time < last_modified:
+                    if _SPANSH_FILE.exists():
+                        _SPANSH_FILE.unlink()
+                    print(f'Downloading prices from remote URL: {_SOURCE_URL}')
+                    try:
+                        transfers.download(tdb.tdenv, _SOURCE_URL, _SPANSH_FILE)
+                    except Exception as e:  # pylint: disable=broad-exception-caught
+                        tdb.tdenv.WARN("Problem with download:\n    URL: {}\n    Error: {}", _SOURCE_URL, str(e))
+                        return False
+                    print(f'Download complete, saved to local file: "{_SPANSH_FILE}"')
+                    os.utime(_SPANSH_FILE, (last_modified, last_modified))
+
                 maxage = ((datetime.now() - datetime.fromtimestamp(config["last_update"])) + timedelta(hours = 1))/timedelta(1)
                 options = '-'
                 if config['debug']:
@@ -391,16 +407,19 @@ def check_update():
                 
                 print("Busy signal acknowledged, performing update.")
                 try:
-                    trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'url={SOURCE_URL},maxage={maxage}', options))
+                    trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'file={_SPANSH_FILE},maxage={maxage}', options))
 
                     trade.main(('trade.py', 'export', '--path', f'{config["export_path"]}'))
 
-                    if config['debug']:
-                        print("Updating dictionaries...")
                     # Since there's been an update, we need to redo all this.
+                    if config['verbose']:
+                        print("Updating dictionaries...")
                     db_name, item_ids, system_ids, station_ids = update_dicts()
-                    
+
                     config['last_update'] = last_modified
+                    if config['debug']:
+                        print(f'last_update: {config['last_update']}, last_modified: {last_modified}')
+
                     with open("tradedangerous-listener-config.json", "w") as config_file:
                         json.dump(config, config_file, indent = 4)
                     
@@ -411,12 +430,14 @@ def check_update():
                     print(e)
                     update_busy = False
                     continue
-                
-                print("Update complete, turning off busy signal.")
+
+                if config['verbose']:
+                    print("Update complete, turning off busy signal.")
                 dump_busy = True
                 update_busy = False
-                db_execute(db, "DELETE FROM StationItem as si WHERE JULIANDAY('NOW') - JULIANDAY(si.modified) > 30")
-                db.commit()
+
+                if config['debug']:
+                    print("Beginning full listings export...")
                 export_dump()
 
             else:
