@@ -565,7 +565,7 @@ def load_config():
                             ('debug', False),                                                       \
                             ('last_update', 0),                                                     \
                             ('client_options', "clean"),                                            \
-                            ('check_update_every_x_min', 60),                                       \
+                            ('check_update_every_x_min', 1440),                                       \
                             ('export_live_every_x_min', 5),                                         \
                             ('export_dump_every_x_hour', 24),                                       \
                             ('db_maint_every_x_hour', 12),                                          \
