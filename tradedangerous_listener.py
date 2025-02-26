@@ -37,7 +37,7 @@ from packaging.version import Version
 
 _minute = 60
 _hour = 3600
-_SPANSH_FILE = "galaxy_systems.json"
+_SPANSH_FILE = "galaxy_stations.json"
 _SOURCE_URL = f'https://downloads.spansh.co.uk/{_SPANSH_FILE}'
 
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
