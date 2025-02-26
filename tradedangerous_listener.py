@@ -173,7 +173,7 @@ class Listener(object):
             # The list thing is a trick to save us having to do
             # the dictionary lookup twice.
             batch = defaultdict(list)
-
+            
             bursts = 0
             if self.wait_for_data(softCutoff, hardCutoff):
                 # When wait_for_data returns True, there is some data waiting,
@@ -232,6 +232,7 @@ class Listener(object):
                         if config['debug'] or config['verbose']:
                             print(f'{system}/{station} update rejected from client not on whitelist: {software} v{swVersion}')
                         continue
+                    
                     # Upload software with version less than the defined minimum is ignored.
                     if whitelist_match[0].get("minversion"):
                         if Version(swVersion) < Version(whitelist_match[0].get("minversion")):
@@ -273,12 +274,12 @@ class Listener(object):
                         timestamp,
                         uploader, software, swVersion,
                     )
-                
+            
             # For the edge-case where we wait 4.999 seconds and then
             # get a burst of data: stick around a little longer.
             if bursts >= self.burstLimit:
                 softCutoff = min(softCutoff, time.time() + 0.5)
-                
+            
             for entry in batch.values():
                 queue.append(entry[0])
         self.disconnect()
@@ -320,12 +321,12 @@ def check_update():
     Checks for updates to the spansh dump.
     """
     global update_busy, dump_busy, process_ack, live_ack, db_name, item_ids, system_ids, station_ids
-
+    
     tdb = tradedb.TradeDB(load = False)
     db = tdb.getDB()
-
+    
     update_file = Path(tdb.tdenv.tmpDir, _SPANSH_FILE)
-
+    
     # Convert the number from the "check_update_every_x_min" setting, which is in minutes,
     # into easily readable hours and minutes.
     h, m = divmod(config['check_update_every_x_min'], 60)
@@ -344,9 +345,9 @@ def check_update():
     now = round(time.time(), 0) - config['check_update_every_x_min']
     dumpModded = 0
     localModded = 0
-
+    
     startup = True
-
+    
     while go:
         # Trigger daily source update if the dumps have updated since last run.
         # Otherwise, go to sleep for {config['check_update_every_x_min']} minutes before checking again.
@@ -367,10 +368,10 @@ def check_update():
             
             url_time = response.getheader("Last-Modified")
             last_modified = datetime.strptime(url_time, "%a, %d %b %Y %H:%M:%S %Z").timestamp()
-
+            
             if not config['last_update'] or config['last_update'] < last_modified:
                 local_mod_time = 0 if not update_file.exists() else update_file.stat().st_mtime
-
+                
                 if config['verbose']:
                     print(f'local_mod_time: {local_mod_time}, last_modified: {last_modified}')
                 if local_mod_time < last_modified:
@@ -384,7 +385,7 @@ def check_update():
                         return False
                     print(f'Download complete, saved to local file: "{update_file}"')
                     os.utime(update_file, (last_modified, last_modified))
-
+                
                 maxage = ((datetime.now() - datetime.fromtimestamp(config["last_update"])) + timedelta(hours = 1))/timedelta(1)
                 options = '-'
                 if config['debug']:
@@ -409,38 +410,38 @@ def check_update():
                 print("Busy signal acknowledged, performing update.")
                 try:
                     trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'file={update_file},maxage={maxage}', options))
-
+                    
                     trade.main(('trade.py', 'export', '--path', f'{config["export_path"]}'))
-
+                    
                     # Since there's been an update, we need to redo all this.
                     if config['verbose']:
                         print("Updating dictionaries...")
                     db_name, item_ids, system_ids, station_ids = update_dicts()
-
+                    
                     config['last_update'] = last_modified
                     if config['debug']:
                         print(f'last_update: {config['last_update']}, last_modified: {last_modified}')
-
+                    
                     with open("tradedangerous-listener-config.json", "w") as config_file:
                         json.dump(config, config_file, indent = 4)
                     
                     now = round(time.time(), 0)
-                    
+                
                 except Exception as e:
                     print("Error when running update:")
                     print(e)
                     update_busy = False
                     continue
-
+                
                 if config['verbose']:
                     print("Update complete, turning off busy signal.")
                 dump_busy = True
                 update_busy = False
-
+                
                 if config['debug']:
                     print("Beginning full listings export...")
                 export_dump()
-
+            
             else:
                 print(f'No update, checking again in {next_check}.')
                 now = round(time.time(), 0)
@@ -458,7 +459,7 @@ def check_server():
     Only runs when program configured as client.
     """
     global update_busy, db_name, item_ids, system_ids, station_ids
-
+    
     # Convert the number from the "check_update_every_x_min" setting, which is in minutes,
     # into easily readable hours and minutes.
     h, m = divmod(config['check_update_every_x_min'], 60)
@@ -473,20 +474,20 @@ def check_server():
         next_check += str(m) + " minute"
         if m > 1:
             next_check += "s"
-
+    
     now = round(time.time(), 0) - config['check_update_every_x_min']
     localModded = 0
-
+    
     BASE_URL = plugins.eddblink_plug.BASE_URL
     LISTINGS = "listings-live.csv"
     listings_path = Path(LISTINGS)
     url = BASE_URL + LISTINGS
-
+    
     while go:
         # Trigger update if the server files have updated.
         # Otherwise, go to sleep for {config['check_update_every_x_min']} minutes before checking again.
         if time.time() >= now + (config['check_update_every_x_min'] * _minute):
-
+            
             response = 0
             tryLeft = 10
             while tryLeft != 0:
@@ -495,18 +496,18 @@ def check_server():
                     tryLeft = 0
                 except:
                     tryLeft -= 1
-
+            
             if not response:
                 print("Error attempting to check for update, no response from server.")
                 continue
-
+            
             url_time = request.urlopen(url).getheader("Last-Modified")
             dumpModded = datetime.strptime(url_time, "%a, %d %b %Y %H:%M:%S %Z").timestamp()
-
+            
             # Now that we have the Unix epoch time of the dump file, get the same from the local file.
             if Path.exists(eddbPath / listings_path):
                 localModded = (eddbPath / listings_path).stat().st_mtime
-
+            
             if localModded < dumpModded:
                 # TD will fail with an error if the database is in use while it's trying
                 # to do its thing, so we need to make sure that neither of the database
@@ -523,28 +524,28 @@ def check_server():
                 options = config['client_options']
                 try:
                     trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', options))
-
+                    
                     # Since there's been an update, we need to redo all this.
                     db_name, item_ids, system_ids, station_ids = update_dicts()
-
+                    
                     print("Update complete, turning off busy signal.")
                     update_busy = False
                     now = round(time.time(), 0)
-
+                
                 except Exception as e:
                     print("Error when running update:")
                     print(e)
-
+            
             else:
                 print(f'No update, checking again in {next_check}.')
                 now = round(time.time(), 0)
-
+        
         if config['debug'] and ((round(time.time(), 0) - now) % 60 == 0):
             print("Update checker is sleeping: "
                     + str(int(now + (config['check_update_every_x_min'] * _minute) - round(time.time(), 0)))
                     + " minutes remain until next check.")
         time.sleep(1)
-
+    
     # If not go:
     print("Update checker reporting shutdown.")
 
@@ -603,7 +604,7 @@ def load_config():
     else:
         # If the config_file doesn't exist, need to make it.
         write_config = True
-
+    
     # Write the current configuration to the file, if needed.
     if write_config:
         with open("tradedangerous-listener-config.json", "w") as config_file:
@@ -654,7 +655,7 @@ def validate_config():
         valid_options = ""
         cmdenv = commands.CommandIndex().parse
         plugin_options = plugins.load(cmdenv(['trade', 'import', '--plug', 'eddblink', '-O', 'help']).plug, "ImportPlugin").pluginOptions.keys()
-
+        
         for option in options:
             if option in plugin_options:
                 if valid_options != "":
@@ -662,7 +663,7 @@ def validate_config():
                 valid_options += option
             else:
                 valid = False
-
+        
         if not valid:
             if valid_options.find("clean") == -1:
                 valid_options = f'clean,{valid_options}'
@@ -808,6 +809,9 @@ def process_messages():
         modified = entry.timestamp.replace('T', ' ').replace('Z', '')
         commodities = entry.commodities
         
+        if config['debug']:
+            print(f'Processing: {system}/{station} timestamp:{modified}')
+        
         # All the stations should be stored using the market_id.
         exists = None
         success = False
@@ -818,7 +822,7 @@ def process_messages():
             except sqlite3.OperationalError:
                 print("Database is locked, waiting for access.", end = "\n")
                 time.sleep(1)
-
+        
         if not exists:
             station_id = station_ids.get(f'{system}/{station}')
             system_id = system_ids.get(system)
@@ -901,7 +905,7 @@ def process_messages():
             # Get fdev_id using commodity name from message.
             item_edid = db_name.get(commodity['name'].lower())
             if not item_edid:
-                if config['verbose']:
+                if config['debug']:
                     print(f"Ignoring item: {commodity['name']}")
                 continue
             # Some items, mostly recently added items, are found in db_name but not in item_ids
@@ -974,7 +978,7 @@ def fetchIter(cursor, arraysize = 1000):
         except AttributeError as e:
             print(e)
             break
-
+        
         if not results:
             break
         for result in results:
@@ -1045,7 +1049,7 @@ def export_live():
             print(cursor)
             live_busy = False
             continue
-
+        
         print(f"Exporting 'listings-live.csv'. (Got listings in {datetime.now() - start})")
         with open(str(listings_tmp), "w") as f:
             f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
@@ -1085,7 +1089,7 @@ def export_live():
                 time.sleep(1)
         listings_tmp.rename(listings_file)
         print(f'Export completed in {datetime.now() - start}')
-    
+        
         now = time.time()
     print("Live listings exporter reporting shutdown.")
 
@@ -1311,11 +1315,11 @@ try:
     # Give the update checker enough time to see if an
     # update is needed before starting the other threads
     time.sleep(5)
-
+    
     if config['verbose']:
         print("Starting listener thread")
     listener_thread.start()
-
+    
     if config['verbose']:
         print("Starting processor thread")
     process_thread.start()
