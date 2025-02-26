@@ -37,7 +37,8 @@ from packaging.version import Version
 
 _minute = 60
 _hour = 3600
-_SOURCE_URL = 'https://downloads.spansh.co.uk/galaxy_stations.json'
+_SPANSH_FILE = "galaxy_populated.json"
+_SOURCE_URL = f'https://downloads.spansh.co.uk/{_SPANSH_FILE}'
 
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
 #
@@ -323,7 +324,7 @@ def check_update():
     tdb = tradedb.TradeDB(load = False)
     db = tdb.getDB()
 
-    _SPANSH_FILE = Path(tdb.tdenv.tmpDir, "galaxy_stations.json")
+    update_file = Path(tdb.tdenv.tmpDir, _SPANSH_FILE)
 
     # Convert the number from the "check_update_every_x_min" setting, which is in minutes,
     # into easily readable hours and minutes.
@@ -368,21 +369,21 @@ def check_update():
             last_modified = datetime.strptime(url_time, "%a, %d %b %Y %H:%M:%S %Z").timestamp()
 
             if not config['last_update'] or config['last_update'] < last_modified:
-                local_mod_time = 0 if not _SPANSH_FILE.exists() else _SPANSH_FILE.stat().st_mtime
+                local_mod_time = 0 if not update_file.exists() else update_file.stat().st_mtime
 
                 if config['verbose']:
                     print(f'local_mod_time: {local_mod_time}, last_modified: {last_modified}')
                 if local_mod_time < last_modified:
-                    if _SPANSH_FILE.exists():
-                        _SPANSH_FILE.unlink()
+                    if update_file.exists():
+                        update_file.unlink()
                     print(f'Downloading prices from remote URL: {_SOURCE_URL}')
                     try:
-                        transfers.download(tdb.tdenv, _SOURCE_URL, _SPANSH_FILE)
+                        transfers.download(tdb.tdenv, _SOURCE_URL, update_file)
                     except Exception as e:  # pylint: disable=broad-exception-caught
                         tdb.tdenv.WARN("Problem with download:\n    URL: {}\n    Error: {}", _SOURCE_URL, str(e))
                         return False
-                    print(f'Download complete, saved to local file: "{_SPANSH_FILE}"')
-                    os.utime(_SPANSH_FILE, (last_modified, last_modified))
+                    print(f'Download complete, saved to local file: "{update_file}"')
+                    os.utime(update_file, (last_modified, last_modified))
 
                 maxage = ((datetime.now() - datetime.fromtimestamp(config["last_update"])) + timedelta(hours = 1))/timedelta(1)
                 options = '-'
@@ -407,7 +408,7 @@ def check_update():
                 
                 print("Busy signal acknowledged, performing update.")
                 try:
-                    trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'file={_SPANSH_FILE},maxage={maxage}', options))
+                    trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'file={update_file},maxage={maxage}', options))
 
                     trade.main(('trade.py', 'export', '--path', f'{config["export_path"]}'))
 
