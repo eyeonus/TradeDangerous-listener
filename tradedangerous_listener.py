@@ -875,17 +875,19 @@ def process_messages():
                 while not success:
                     try:
                         curs.execute("BEGIN IMMEDIATE")
+
                         result = curs.execute(getOldStationInfo, (station_id,))
                         nm, ls, bm, mps, mk, sy, of, ra, rf, rp, pl, ti = result.fetchone()
-                        
+
+                        curs.execute(removeOldStation, (station_id,))
                         curs.execute(insertNewStation, (market_id, nm, system_id, ls, bm,
                                                         mps, mk, sy, modified,
                                                         of, ra, rf, rp, pl, ti))
-                        
-                        curs.execute(removeOldStation, (station_id,))
-                        
+
                         db.commit()
                         success = True
+                    except TypeError:
+                        continue
                     except sqlite3.IntegrityError as e:
                         if config['verbose']:
                             print(e)
@@ -894,6 +896,7 @@ def process_messages():
                         print("Database is locked, waiting for access.", end = "\n")
                         print(e)
                         time.sleep(1)
+        
         station_id = market_id
         
         itemList = []
