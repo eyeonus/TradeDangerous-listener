@@ -40,6 +40,8 @@ _hour = 3600
 _SPANSH_FILE = "galaxy_stations.json"
 _SOURCE_URL = f'https://downloads.spansh.co.uk/{_SPANSH_FILE}'
 
+# print(f'Spansh import plugin source file is: {_SOURCE_URL}')
+
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
 #
 # Conditional permission to copy, modify, refactor or use this
@@ -304,9 +306,7 @@ def db_execute(db, sql_cmd, args = None):
                 success = True
                 print(f'{sqlOpError}')
             else:
-                print("Database is locked, waiting for access.", end = "\n")
-                print(f'Error message: {sqlOpError}')
-                time.sleep(1)
+                db_locked_message(f"de-'{sql_cmd[:20]}'")
     return result
 
 
@@ -723,6 +723,9 @@ def validate_config():
             fh.write(config_file)
         config = load_config()
 
+def db_locked_message(source: str)  -> None:
+    print(f"[{source} - DB locked, waiting for access.", end="\n")
+    time.sleep(1)
 
 def process_messages():
     global process_ack, update_busy, dump_busy, live_busy, db_name, item_ids, system_ids, station_ids
@@ -820,8 +823,7 @@ def process_messages():
                 exists = curs.execute("SELECT station_id FROM Station WHERE station_id = ?", (market_id,)).fetchone()
                 success = True
             except sqlite3.OperationalError:
-                print("Database is locked, waiting for access.", end = "\n")
-                time.sleep(1)
+                db_locked_message("pm-get station_id")
         
         if not exists:
             station_id = station_ids.get(f'{system}/{station}')
@@ -845,8 +847,7 @@ def process_messages():
                                 print(f'ERROR: Not found in Systems: {system}/{station}')
                             continue
                         except sqlite3.OperationalError:
-                            print("Database is locked, waiting for access.", end = "\n")
-                            time.sleep(1)
+                            db_locked_message("pm-move megaship")
                 else:
                     # If we can't find it by any of these means, it must be a 'new' station.
                     if config['verbose']:
@@ -866,8 +867,7 @@ def process_messages():
                                 print(e)
                             continue
                         except sqlite3.OperationalError:
-                            print("Database is locked, waiting for access.", end = "\n")
-                            time.sleep(1)
+                            db_locked_message("pm-add new station")
                             continue
                     station_ids[f'{system}/{station}'] = market_id
             if station_id and (station_id != market_id):
@@ -875,15 +875,15 @@ def process_messages():
                 while not success:
                     try:
                         curs.execute("BEGIN IMMEDIATE")
-
+                        
                         result = curs.execute(getOldStationInfo, (station_id,))
                         nm, ls, bm, mps, mk, sy, of, ra, rf, rp, pl, ti = result.fetchone()
-
-                        curs.execute(removeOldStation, (station_id,))
+                        
                         curs.execute(insertNewStation, (market_id, nm, system_id, ls, bm,
                                                         mps, mk, sy, modified,
                                                         of, ra, rf, rp, pl, ti))
-
+                        curs.execute(removeOldStation, (station_id,))
+                        
                         db.commit()
                         success = True
                     except TypeError:
@@ -893,9 +893,7 @@ def process_messages():
                             print(e)
                         continue
                     except sqlite3.OperationalError as e:
-                        print("Database is locked, waiting for access.", end = "\n")
-                        print(e)
-                        time.sleep(1)
+                        db_locked_message("pm-fix station_id to match EDDN market_id")
         
         station_id = market_id
         
@@ -934,8 +932,7 @@ def process_messages():
                 curs.execute("BEGIN IMMEDIATE")
                 success = True
             except sqlite3.OperationalError:
-                print("Database is locked, waiting for access.", end = "\n")
-                time.sleep(1)
+                db_locked_message("pm-update station's market data")
         
         curs.execute(deleteStationItemEntry, (station_id,))
         
@@ -959,8 +956,7 @@ def process_messages():
                 db.commit()
                 success = True
             except sqlite3.OperationalError:
-                print("Database is locked, waiting for access.", end = "\n")
-                time.sleep(1)
+                db_locked_message("pm-commit station's market update")
         
         if config['verbose']:
             print(f'Updated {system}/{station}, station_id:\'{station_id}\', from {entry.software} v{entry.version}')
@@ -1132,8 +1128,7 @@ def export_dump():
             cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem ORDER BY station_id, item_id"))
             success = True
         except sqlite3.OperationalError:
-            print("(commit) Database is locked, waiting for access.", end = "\r")
-            time.sleep(1)
+            db_locked_message("ed-get market data for full export")
         except sqlite3.DatabaseError as e:
             print("Aborting export:")
             print(e)
