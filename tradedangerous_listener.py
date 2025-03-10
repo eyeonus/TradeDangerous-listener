@@ -724,7 +724,7 @@ def validate_config():
         config = load_config()
 
 def db_locked_message(source: str)  -> None:
-    print(f"[{source} - DB locked, waiting for access.", end="\n")
+    print(f"[{source}] - DB locked, waiting for access.", end="\n")
     time.sleep(1)
 
 def process_messages():
@@ -874,16 +874,14 @@ def process_messages():
                 success = False
                 while not success:
                     try:
-                        curs.execute("BEGIN IMMEDIATE")
-                        
                         result = curs.execute(getOldStationInfo, (station_id,))
-                        nm, ls, bm, mps, mk, sy, of, ra, rf, rp, pl, ti = result.fetchone()
-                        
-                        curs.execute(insertNewStation, (market_id, nm, system_id, ls, bm,
-                                                        mps, mk, sy, modified,
-                                                        of, ra, rf, rp, pl, ti))
-                        curs.execute(removeOldStation, (station_id,))
-                        
+                        if result:
+                            nm, ls, bm, mps, mk, sy, of, ra, rf, rp, pl, ti = result.fetchone()
+                            curs.execute("BEGIN IMMEDIATE")
+                            curs.execute(removeOldStation, (station_id,))
+                            curs.execute(insertNewStation, (market_id, nm, system_id, ls, bm,
+                                         mps, mk, sy, modified, of, ra, rf, rp, pl, ti))
+
                         db.commit()
                         success = True
                     except TypeError:
@@ -893,7 +891,7 @@ def process_messages():
                             print(e)
                         continue
                     except sqlite3.OperationalError as e:
-                        db_locked_message("pm-fix station_id to match EDDN market_id")
+                        db_locked_message(f'pm-fix station_id {e}')
         
         station_id = market_id
         
