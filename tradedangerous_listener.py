@@ -1253,7 +1253,6 @@ go = True
 q = deque()
 
 dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve()
-eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath
 
 config = load_config()
 if config['client_options'] == 'clean' or not Path(dataPath, 'TradeDangerous.db').exists():
@@ -1262,6 +1261,12 @@ if config['client_options'] == 'clean' or not Path(dataPath, 'TradeDangerous.db'
     config['client_options'] = 'all'
     with open("tradedangerous-listener-config.json", "w") as config_file:
         json.dump(config, config_file, indent=4)
+
+if config['verbose']:
+    print("Loading TradeDB")
+tdb = tradedb.TradeDB(load = False)
+
+eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath
 
 validate_config()
 if config['verbose']:
@@ -1287,10 +1292,6 @@ else:
 
 # (server) export market data updated since last source update
 live_thread = threading.Thread(target = export_live)
-
-if config['verbose']:
-    print("Loading TradeDB")
-tdb = tradedb.TradeDB(load = False)
 
 if config['verbose']:
     print("Updating dicts")
