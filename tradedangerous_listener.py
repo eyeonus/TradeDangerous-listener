@@ -1258,7 +1258,7 @@ eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath
 config = load_config()
 if config['client_options'] == 'clean' or not Path(dataPath, 'TradeDangerous.db').exists():
     print("Initial run")
-    trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', 'clean, solo'))
+    trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', 'clean,solo'))
     config['client_options'] = 'all'
     with open("tradedangerous-listener-config.json", "w") as config_file:
         json.dump(config, config_file, indent=4)
