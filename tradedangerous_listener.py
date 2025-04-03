@@ -420,7 +420,7 @@ def check_update():
                     
                     config['last_update'] = last_modified
                     if config['debug']:
-                        print(f'last_update: {config['last_update']}, last_modified: {last_modified}')
+                        print(f"last_update: {config['last_update']}, last_modified: {last_modified}")
                     
                     with open("tradedangerous-listener-config.json", "w") as config_file:
                         json.dump(config, config_file, indent = 4)
