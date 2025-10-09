@@ -1,7 +1,7 @@
 # TradeDangerous-listener
 A listener for TradeDangerous, designed to work in conjunction with Trade Dangerous (https://github.com/eyeonus/Trade-Dangerous).
 
-Python version 3.7+ recommended.
+Python version 3.10+ required.
 
 # Notes
 - This program requires TD to be installed on the same machine as this in order to work.
