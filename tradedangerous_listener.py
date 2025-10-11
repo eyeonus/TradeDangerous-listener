@@ -770,9 +770,9 @@ def db_locked_message(source: str)  -> None:
 
 def process_messages_sa():
     """
-    Consume MarketPrice entries and upsert rows via SQLAlchemy.
-    Preserves legacy semantics and busy-signal choreography (thread mode),
-    and performs periodic DB maintenance per config['db_maint_every_x_hour'].
+    Consume MarketPrice entries and upsert rows via SQLAlchemy (threaded mode).
+    Mirrors legacy behavior on unknown systems/stations: log and skip, keep running.
+    Performs periodic DB maintenance and respects busy flags.
     """
     global process_ack, update_busy, dump_busy, live_busy, db_name, item_ids, system_ids, station_ids
 
@@ -807,12 +807,21 @@ def process_messages_sa():
     )
     DELETE_STATION = text("DELETE FROM Station WHERE station_id = :sid")
     MOVE_STATION = text("UPDATE Station SET system_id = :system_id, name = :name WHERE station_id = :sid")
+    GET_SYSTEM_ID_BY_NAME = text("SELECT system_id FROM System WHERE UPPER(name) = :n")
 
-    # Schedule DB maintenance
+    # Maintenance cadence
     maintenance_deadline = time.time() + (config['db_maint_every_x_hour'] * _hour)
 
+    def resolve_system_id(sess, system_name_upper: str):
+        """Try dict first, then DB lookup by name (case-insensitive)."""
+        sid = system_ids.get(system_name_upper)
+        if sid:
+            return sid
+        row = sess.execute(GET_SYSTEM_ID_BY_NAME, {"n": system_name_upper}).first()
+        return row[0] if row else None
+
     while go:
-        # Respect existing busy gating (threaded mode)
+        # Respect busy flags (threaded parity)
         if update_busy or dump_busy or live_busy:
             print("Message processor acknowledging busy signal.")
             process_ack = True
@@ -823,14 +832,17 @@ def process_messages_sa():
             process_ack = False
             print("Busy signal off, message processor resuming.")
 
-        # Time-based maintenance
+        # Maintenance
         if time.time() >= maintenance_deadline:
-            print(f'Performing database maintenance tasks. {str(datetime.now())}')
-            perform_db_maintenance_sa()
-            print(f'Database maintenance tasks completed. {str(datetime.now())}')
+            try:
+                print(f'Performing database maintenance tasks. {str(datetime.now())}')
+                perform_db_maintenance_sa()
+                print(f'Database maintenance tasks completed. {str(datetime.now())}')
+            except Exception as e:
+                print("Error performing maintenance:", e)
             maintenance_deadline = time.time() + (config['db_maint_every_x_hour'] * _hour)
 
-        # Pull next message (or wait)
+        # Next message
         try:
             entry = q.popleft()
         except IndexError:
@@ -846,9 +858,8 @@ def process_messages_sa():
         if config['debug']:
             print(f'Processing: {system}/{station} timestamp:{modified}')
 
-        # Build rows
-        item_rows = []
-        avg_rows = []
+        # Prepare item rows
+        item_rows, avg_rows = [], []
         for commodity in commodities:
             if commodity['sellPrice'] == 0 and commodity['buyPrice'] == 0:
                 continue
@@ -858,69 +869,77 @@ def process_messages_sa():
                     print(f"Ignoring item: {commodity['name']}")
                 continue
             item_id = item_ids.get(item_edid) or int(item_edid)
-
             item_rows.append({
-                "station_id": station_id,
-                "item_id": item_id,
-                "modified": modified,
-                "demand_price": commodity['sellPrice'],
-                "demand_units": commodity['demand'],
+                "station_id": station_id, "item_id": item_id, "modified": modified,
+                "demand_price": commodity['sellPrice'], "demand_units": commodity['demand'],
                 "demand_level": (commodity['demandBracket'] if commodity['demandBracket'] != '' else -1),
-                "supply_price": commodity['buyPrice'],
-                "supply_units": commodity['stock'],
+                "supply_price": commodity['buyPrice'], "supply_units": commodity['stock'],
                 "supply_level": (commodity['stockBracket'] if commodity['stockBracket'] != '' else -1),
             })
             avg_rows.append({"avg_price": commodity['meanPrice'], "item_id": item_id})
 
         from_megaship = f"MEGASHIP/{station}"
 
-        with sa_session() as s:
-            with s.begin():
-                exists = s.execute(GET_STATION_BY_ID, {"station_id": station_id}).first()
-                if not exists:
-                    sys_id = system_ids.get(system)
-                    maybe_old = station_ids.get(from_megaship)
-                    if maybe_old and sys_id:
-                        if config['verbose']:
-                            print(f'Megaship station, updating system to {system}')
-                        s.execute(MOVE_STATION, {"system_id": sys_id, "name": entry.station, "sid": maybe_old})
-                    else:
-                        if config['verbose']:
-                            print(f'Not found in Stations: {system}/{station}, inserting into DB.')
-                        s.execute(INSERT_NEW_STATION, {
-                            "station_id": station_id, "name": entry.station, "system_id": sys_id,
-                            "ls_from_star": 999999, "blackmarket": '?', "max_pad_size": '?',
-                            "market": 'Y', "shipyard": '?', "modified": modified, "outfitting": '?',
-                            "rearm": '?', "refuel": '?', "repair": '?', "planetary": '?', "type_id": 0,
-                        })
-                        station_ids[f'{system}/{station}'] = station_id
+        try:
+            with sa_session() as s:
+                with s.begin():
+                    # Ensure station exists or can be added, but only if we know system_id
+                    exists = s.execute(GET_STATION_BY_ID, {"station_id": station_id}).first()
+                    if not exists:
+                        sys_id = resolve_system_id(s, system)
+                        if sys_id is None:
+                            # Legacy parity: we cannot create Station without a system_id → log and skip.
+                            print(f"WARNING: system not found for station insert; skipping: {system}/{station} (market_id={station_id})")
+                            continue
 
-                old_sid = station_ids.get(f'{system}/{station}')
-                if old_sid and old_sid != station_id:
-                    res = s.execute(GET_OLD_STATION_INFO, {"sid": old_sid}).first()
-                    if res:
-                        (nm, ls, bm, mps, mk, sy, of, ra, rf, rp, pl, ti, old_sys_id) = res
-                        s.execute(DELETE_STATION, {"sid": old_sid})
-                        s.execute(INSERT_NEW_STATION, {
-                            "station_id": station_id, "name": nm,
-                            "system_id": old_sys_id, "ls_from_star": ls,
-                            "blackmarket": bm, "max_pad_size": mps, "market": mk,
-                            "shipyard": sy, "modified": modified, "outfitting": of,
-                            "rearm": ra, "refuel": rf, "repair": rp, "planetary": pl, "type_id": ti,
-                        })
+                        maybe_old = station_ids.get(from_megaship)
+                        if maybe_old:
+                            if config['verbose']:
+                                print(f'Megaship station, updating system to {system}')
+                            s.execute(MOVE_STATION, {"system_id": sys_id, "name": entry.station, "sid": maybe_old})
+                        else:
+                            if config['verbose']:
+                                print(f'Not found in Stations: {system}/{station}, inserting into DB.')
+                            s.execute(INSERT_NEW_STATION, {
+                                "station_id": station_id, "name": entry.station, "system_id": sys_id,
+                                "ls_from_star": 999999, "blackmarket": '?', "max_pad_size": '?',
+                                "market": 'Y', "shipyard": '?', "modified": modified, "outfitting": '?',
+                                "rearm": '?', "refuel": '?', "repair": '?', "planetary": '?', "type_id": 0,
+                            })
+                            station_ids[f'{system}/{station}'] = station_id
 
-                s.execute(DELETE_STATION_ITEMS, {"station_id": station_id})
-                if item_rows:
-                    s.execute(INSERT_STATION_ITEM, item_rows)
-                if avg_rows:
-                    s.execute(UPDATE_ITEM_AVG, avg_rows)
+                    # Migrate old station_id mapping if needed (parity with legacy)
+                    old_sid = station_ids.get(f'{system}/{station}')
+                    if old_sid and old_sid != station_id:
+                        res = s.execute(GET_OLD_STATION_INFO, {"sid": old_sid}).first()
+                        if res:
+                            (nm, ls, bm, mps, mk, sy, of, ra, rf, rp, pl, ti, old_sys_id) = res
+                            s.execute(DELETE_STATION, {"sid": old_sid})
+                            s.execute(INSERT_NEW_STATION, {
+                                "station_id": station_id, "name": nm, "system_id": old_sys_id,
+                                "ls_from_star": ls, "blackmarket": bm, "max_pad_size": mps, "market": mk,
+                                "shipyard": sy, "modified": modified, "outfitting": of, "rearm": ra, "refuel": rf,
+                                "repair": rp, "planetary": pl, "type_id": ti,
+                            })
 
-        if config['verbose']:
-            print(f"Updated {system}/{station}, station_id:'{station_id}', from {entry.software} v{entry.version}")
-        else:
-            print(f'Updated {system}/{station}')
+                    # Replace market rows
+                    s.execute(DELETE_STATION_ITEMS, {"station_id": station_id})
+                    if item_rows:
+                        s.execute(INSERT_STATION_ITEM, item_rows)
+                    if avg_rows:
+                        s.execute(UPDATE_ITEM_AVG, avg_rows)
+
+            if config['verbose']:
+                print(f"Updated {system}/{station}, station_id:'{station_id}', from {entry.software} v{entry.version}")
+            else:
+                print(f'Updated {system}/{station}')
+
+        except Exception as e:
+            # Keep processing on any unexpected DB error; log and continue
+            print(f"ERROR processing {system}/{station} (market_id={station_id}): {e}")
 
     print("Message processor (SA) reporting shutdown.")
+
 
 
 def export_live_sa():
@@ -963,14 +982,22 @@ def export_live_sa():
             time.sleep(0.05)
         print("Busy signal acknowledged, getting live listings for export.")
 
-        SELECT_LIVE = text(
-            "SELECT station_id, item_id, "
-            "       demand_price, demand_units, demand_level, "
-            "       supply_price, supply_units, supply_level, modified "
-            "FROM StationItem "
-            "WHERE from_live = 1 "
-            "ORDER BY station_id, item_id"
-        )
+        SELECT_LIVE = text("""
+            SELECT
+                station_id,
+                item_id,
+                supply_price  AS sell_price,
+                demand_units  AS demand,
+                demand_level  AS demand_bracket,
+                demand_price  AS buy_price,
+                supply_units  AS supply,
+                supply_level  AS supply_bracket,
+                modified
+            FROM StationItem
+            WHERE from_live = 1
+            ORDER BY station_id, item_id
+        """)
+
 
         try:
             with sa_session() as s:
@@ -1038,13 +1065,20 @@ def export_dump_sa():
     print("Busy signal acknowledged, getting listings for export.")
 
     UPDATE_CLEAR_LIVE = text("UPDATE StationItem SET from_live = 0")
-    SELECT_ALL = text(
-        "SELECT station_id, item_id, "
-        "       demand_price, demand_units, demand_level, "
-        "       supply_price, supply_units, supply_level, modified "
-        "FROM StationItem "
-        "ORDER BY station_id, item_id"
-    )
+    SELECT_ALL = text("""
+        SELECT
+            station_id,
+            item_id,
+            supply_price  AS sell_price,
+            demand_units  AS demand,
+            demand_level  AS demand_bracket,
+            demand_price  AS buy_price,
+            supply_units  AS supply,
+            supply_level  AS supply_bracket,
+            modified
+        FROM StationItem
+        ORDER BY station_id, item_id
+    """)
 
     try:
         with sa_session() as s:
