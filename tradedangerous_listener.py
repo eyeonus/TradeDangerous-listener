@@ -360,6 +360,8 @@ def get_messages():
 def check_update():
     """
     Checks for updates to the spansh dump.
+    If TDL_SKIP_SPANSH=1 is set in the environment, we skip the costly
+    spansh import/export step but still exercise the same busy/ack + dump path.
     """
     global update_busy, dump_busy, process_ack, live_ack, db_name, item_ids, system_ids, station_ids
     
@@ -384,8 +386,6 @@ def check_update():
             next_check += "s"
     
     now = round(time.time(), 0) - config['check_update_every_x_min']
-    dumpModded = 0
-    localModded = 0
     
     startup = True
     
@@ -415,19 +415,23 @@ def check_update():
                 
                 if config['verbose']:
                     print(f'local_mod_time: {local_mod_time}, last_modified: {last_modified}')
-                if local_mod_time < last_modified:
-                    if update_file.exists():
-                        update_file.unlink()
-                    print(f'Downloading prices from remote URL: {_SOURCE_URL}')
-                    try:
-                        transfers.download(tdb.tdenv, _SOURCE_URL, update_file)
-                    except Exception as e:  # pylint: disable=broad-exception-caught
-                        tdb.tdenv.WARN("Problem with download:\n    URL: {}\n    Error: {}", _SOURCE_URL, str(e))
-                        return False
-                    print(f'Download complete, saved to local file: "{update_file}"')
-                    os.utime(update_file, (last_modified, last_modified))
                 
-                maxage = ((datetime.now() - datetime.fromtimestamp(config["last_update"])) + timedelta(hours = 1))/timedelta(1)
+                # Download only if not skipping Spansh and local file older/new
+                skip_spansh = os.environ.get("TDL_SKIP_SPANSH") == "1"
+                if not skip_spansh:
+                    if local_mod_time < last_modified:
+                        if update_file.exists():
+                            update_file.unlink()
+                        print(f'Downloading prices from remote URL: {_SOURCE_URL}')
+                        try:
+                            transfers.download(tdb.tdenv, _SOURCE_URL, update_file)
+                        except Exception as e:  # pylint: disable=broad-exception-caught
+                            tdb.tdenv.WARN("Problem with download:\n    URL: {}\n    Error: {}", _SOURCE_URL, str(e))
+                            return False
+                        print(f'Download complete, saved to local file: "{update_file}"')
+                        os.utime(update_file, (last_modified, last_modified))
+                
+                maxage = ((datetime.now() - datetime.fromtimestamp(config.get("last_update", 0))) + timedelta(hours = 1))/timedelta(1)
                 options = '-'
                 if config['debug']:
                     options += 'w'
@@ -450,21 +454,29 @@ def check_update():
                 
                 print("Busy signal acknowledged, performing update.")
                 try:
-                    trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'file={update_file},maxage={maxage}', options))
-                    
-                    trade.main(('trade.py', 'export', '--path', f'{config["export_path"]}'))
-                    
-                    # Since there's been an update, we need to redo all this.
-                    if config['verbose']:
-                        print("Updating dictionaries...")
-                    db_name, item_ids, system_ids, station_ids = update_dicts()
-                    
-                    config['last_update'] = last_modified
-                    if config['debug']:
-                        print(f"last_update: {config['last_update']}, last_modified: {last_modified}")
-                    
-                    with open("tradedangerous-listener-config.json", "w") as config_file:
-                        json.dump(config, config_file, indent = 4)
+                    if skip_spansh:
+                        print("TEST MODE: TDL_SKIP_SPANSH=1 → skipping Spansh import/export; proceeding directly to listings.csv dump.")
+                    else:
+                        # Run the real Spansh import/export
+                        trade.main((
+                            'trade.py', 'import', '-P', 'spansh',
+                            '-O', f'file={update_file},maxage={maxage},skip_stationitems=1',
+                            options,
+                        ))
+                        # trade.main(('trade.py', 'export', '--path', f'{config["export_path"]}')) # Why export twice?
+                        
+                        # Since there's been an update, we need to redo all this.
+                        if config['verbose']:
+                            print("Updating dictionaries...")
+                        db_name, item_ids, system_ids, station_ids = update_dicts()
+                        
+                        # Only advance last_update when we actually processed the new dump
+                        config['last_update'] = last_modified
+                        if config['debug']:
+                            print(f"last_update: {config['last_update']}, last_modified: {last_modified}")
+                        
+                        with open("tradedangerous-listener-config.json", "w") as config_file:
+                            json.dump(config, config_file, indent = 4)
                     
                     now = round(time.time(), 0)
                 
@@ -475,13 +487,16 @@ def check_update():
                     continue
                 
                 if config['verbose']:
-                    print("Update complete, turning off busy signal.")
+                    print("Update complete (or skipped in TEST MODE), turning off busy signal.")
                 dump_busy = True
                 update_busy = False
                 
                 if config['debug']:
                     print("Beginning full listings export...")
+                # SA exporter
+                print("[update] calling export_dump_sa()")
                 export_dump_sa()
+                print("[update] export_dump_sa() finished")
             
             else:
                 print(f'No update, checking again in {next_check}.')
@@ -492,6 +507,7 @@ def check_update():
         time.sleep(1)
     
     print("Update checker reporting shutdown.")
+
 
 
 def check_server():
@@ -982,21 +998,22 @@ def export_live_sa():
             time.sleep(0.05)
         print("Busy signal acknowledged, getting live listings for export.")
 
+        # listings-live.csv
         SELECT_LIVE = text("""
             SELECT
                 station_id,
                 item_id,
-                supply_price  AS sell_price,
+                demand_price  AS sell_price,
                 demand_units  AS demand,
                 demand_level  AS demand_bracket,
-                demand_price  AS buy_price,
+                supply_price  AS buy_price,
                 supply_units  AS supply,
                 supply_level  AS supply_bracket,
                 modified
             FROM StationItem
             WHERE from_live = 1
             ORDER BY station_id, item_id
-        """)
+""")
 
 
         try:
@@ -1069,10 +1086,10 @@ def export_dump_sa():
         SELECT
             station_id,
             item_id,
-            supply_price  AS sell_price,
+            demand_price  AS sell_price,
             demand_units  AS demand,
             demand_level  AS demand_bracket,
-            demand_price  AS buy_price,
+            supply_price  AS buy_price,
             supply_units  AS supply,
             supply_level  AS supply_bracket,
             modified
@@ -1195,87 +1212,242 @@ dump_busy = False
 go = True
 q = deque()
 
-dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve()
+import argparse
 
-config = load_config()
-if config['client_options'] == 'clean' or not Path(dataPath, 'TradeDangerous.db').exists():
-    print("Initial run")
-    trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', 'clean,solo'))
-    config['client_options'] = 'all'
-    with open("tradedangerous-listener-config.json", "w") as config_file:
-        json.dump(config, config_file, indent=4)
+def bootstrap_runtime():
+    """
+    Recreate the legacy top-level initialization but *without* starting threads.
+    Returns the thread objects. Safe to call only in normal threaded runs.
+    """
+    global dataPath, config, tdb, eddbPath, db_name, item_ids, system_ids, station_ids
 
-if config['verbose']:
-    print("Loading TradeDB")
-tdb = tradedb.TradeDB(load = False)
+    # Paths & config
+    dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve()
 
-eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath
+    config = load_config()
+    if config['client_options'] == 'clean' or not Path(dataPath, 'TradeDangerous.db').exists():
+        print("Initial run")
+        trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', 'clean,solo'))
+        config['client_options'] = 'all'
+        with open("tradedangerous-listener-config.json", "w") as config_file:
+            json.dump(config, config_file, indent=4)
 
-validate_config()
-if config['verbose']:
-    print("Config loaded")
-# Make sure the export folder exists
-try:
-    Path(config['export_path']).mkdir()
-except FileExistsError:
-    pass
-
-if config['verbose']:
-    print("Initializing threads")
-# get and process trade data messages from EDDN
-listener_thread = threading.Thread(target = get_messages)
-process_thread = threading.Thread(target = process_messages_sa)
-
-if config['side'] == 'client':
-    # (client) check if server has updated
-    update_thread = threading.Thread(target = check_server)
-else:
-    # (server) check for update to source data and process it
-    update_thread = threading.Thread(target = check_update)
-
-# (server) export market data updated since last source update
-live_thread = threading.Thread(target = export_live_sa)
-
-if config['verbose']:
-    print("Updating dicts")
-global db_name, item_ids, system_ids, station_ids
-try:
-    db_name, item_ids, system_ids, station_ids = update_dicts()
-except Exception as e:
-    print(str(e))
-    pass
-
-if config['verbose']:
-    print("Startup process completed.")
-
-print("Press CTRL-C at any time to quit gracefully.")
-try:
     if config['verbose']:
-        print("Starting update thread")
-    update_thread.start()
-    # Give the update checker enough time to see if an
-    # update is needed before starting the other threads
-    time.sleep(5)
-    
+        print("Loading TradeDB")
+    tdb = tradedb.TradeDB(load = False)
+
+    # eddblink data path (for client mode)
+    eddb_inst = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv())
+    globals()['eddbPath'] = eddb_inst.dataPath
+
+    validate_config()
     if config['verbose']:
-        print("Starting listener thread")
-    listener_thread.start()
-    
+        print("Config loaded")
+
+    # Ensure export folder exists
+    try:
+        Path(config['export_path']).mkdir()
+    except FileExistsError:
+        pass
+
     if config['verbose']:
-        print("Starting processor thread")
-    process_thread.start()
-    
-    if config['side'] == 'server':
-        time.sleep(1)
-        if config['verbose']:
-            print("Starting live exporter thread")
-        live_thread.start()
+        print("Initializing threads")
+
+    # Thread targets: use the SA variants we refactored
+    listener_thread = threading.Thread(target=get_messages)
+    process_thread  = threading.Thread(target=process_messages_sa)
+
+    if config['side'] == 'client':
+        update_thread = threading.Thread(target=check_server)
     else:
-        live_ack = True
-    
-    while True:
-        time.sleep(1)
-except KeyboardInterrupt:
-    print("CTRL-C detected, stopping.")
-    print("Please wait for all processes to report they are finished, in case they are currently active.")
-    go = False
+        update_thread = threading.Thread(target=check_update)
+
+    live_thread = threading.Thread(target=export_live_sa)
+
+    if config['verbose']:
+        print("Updating dicts")
+    try:
+        db_name, item_ids, system_ids, station_ids = update_dicts()
+    except Exception as e:
+        print(str(e))
+
+    if config['verbose']:
+        print("Startup process completed.")
+
+    return update_thread, listener_thread, process_thread, live_thread
+
+
+def print_stationitem_stats():
+    TOTAL = text("SELECT COUNT(*) FROM StationItem")
+    LIVE  = text("SELECT COUNT(*) FROM StationItem WHERE from_live = 1")
+    LATEST = text("SELECT MAX(modified) FROM StationItem")
+    with sa_session() as s:
+        total = s.execute(TOTAL).scalar_one()
+        live  = s.execute(LIVE).scalar_one()
+        latest = s.execute(LATEST).scalar_one()
+    print(f"[stats] StationItem total={total} live={live} latest_modified={latest}")
+
+
+def export_live_once_sa():
+    listings_file = (Path(config['export_path']).resolve() / Path("listings-live.csv"))
+    listings_tmp = listings_file.with_suffix(".tmp")
+    # listings-live.csv
+    SELECT_LIVE = text("""
+        SELECT
+            station_id,
+            item_id,
+            demand_price  AS sell_price,
+            demand_units  AS demand,
+            demand_level  AS demand_bracket,
+            supply_price  AS buy_price,
+            supply_units  AS supply,
+            supply_level  AS supply_bracket,
+            modified
+        FROM StationItem
+        WHERE from_live = 1
+        ORDER BY station_id, item_id
+    """)
+    start = datetime.now()
+    with sa_session() as s:
+        result = s.execute(SELECT_LIVE.execution_options(stream_results=True))
+        with open(str(listings_tmp), "w") as f:
+            f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
+            lineNo = 1
+            for row in result:
+                station_id, commodity_id = str(row[0]), str(row[1])
+                sell_price, demand, demand_bracket = str(row[2]), str(row[3]), str(row[4])
+                buy_price, supply, supply_bracket = str(row[5]), str(row[6]), str(row[7])
+                ts_val = row[8]
+                ts_str = ts_val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts_val, "strftime") else str(ts_val).split(".")[0]
+                collected_at = str(timegm(datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").timetuple()))
+                listing = (f"{station_id},{commodity_id},{supply},{supply_bracket},{buy_price},{sell_price},"
+                           f"{demand},{demand_bracket},{collected_at}")
+                f.write(f"{lineNo},{listing}\n"); lineNo += 1
+    while listings_file.exists():
+        try:
+            listings_file.unlink()
+        except:
+            time.sleep(0.5)
+    listings_tmp.rename(listings_file)
+    print(f"[export-live-now] wrote {listings_file} in {datetime.now() - start}")
+
+
+def export_dump_once_sa():
+    UPDATE_CLEAR_LIVE = text("UPDATE StationItem SET from_live = 0")
+    # listings.csv (full dump)
+    SELECT_ALL = text("""
+        SELECT
+            station_id,
+            item_id,
+            demand_price  AS sell_price,
+            demand_units  AS demand,
+            demand_level  AS demand_bracket,
+            supply_price  AS buy_price,
+            supply_units  AS supply,
+            supply_level  AS supply_bracket,
+            modified
+        FROM StationItem
+        ORDER BY station_id, item_id
+    """)
+    listings_file = (Path(config['export_path']).resolve() / Path("listings.csv"))
+    listings_tmp  = listings_file.with_suffix(".tmp")
+    start = datetime.now()
+    with sa_session() as s:
+        with s.begin():
+            s.execute(UPDATE_CLEAR_LIVE)
+        result = s.execute(SELECT_ALL.execution_options(stream_results=True))
+        with open(str(listings_tmp), "w") as f:
+            f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
+            lineNo = 1
+            for row in result:
+                station_id, commodity_id = str(row[0]), str(row[1])
+                sell_price, demand, demand_bracket = str(row[2]), str(row[3]), str(row[4])
+                buy_price, supply, supply_bracket = str(row[5]), str(row[6]), str(row[7])
+                ts_val = row[8]
+                ts_str = ts_val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts_val, "strftime") else str(ts_val).split(".")[0]
+                collected_at = str(timegm(datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").timetuple()))
+                listing = (f"{station_id},{commodity_id},{supply},{supply_bracket},{buy_price},{sell_price},"
+                           f"{demand},{demand_bracket},{collected_at}")
+                f.write(f"{lineNo},{listing}\n"); lineNo += 1
+    while listings_file.exists():
+        try:
+            listings_file.unlink()
+        except:
+            time.sleep(0.5)
+    listings_tmp.rename(listings_file)
+    print(f"[export-dump-now] wrote {listings_file} in {datetime.now() - start}")
+
+
+def parse_args():
+    p = argparse.ArgumentParser(prog="tradedangerous_listener")
+    p.add_argument("--no-update", action="store_true",
+                   help="Skip the update thread (no Spansh/client imports).")
+    p.add_argument("--export-live-now", action="store_true",
+                   help="Run a single listings-live.csv export and exit.")
+    p.add_argument("--export-dump-now", action="store_true",
+                   help="Run a single full listings.csv export and exit.")
+    p.add_argument("--stats", action="store_true",
+                   help="Print StationItem counts (before any one-shot export).")
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    # One-shot modes (no heavy bootstrap, no threads)
+    if args.stats or args.export_live_now or args.export_dump_now:
+        # need config for export_path; load minimal config here
+        global config
+        if 'config' not in globals() or not isinstance(config, dict):
+            config = load_config()
+        if args.stats:
+            print_stationitem_stats()
+        if args.export_live_now:
+            export_live_once_sa()
+        if args.export_dump_now:
+            export_dump_once_sa()
+        return
+
+    # Normal threaded run: bootstrap then start threads
+    update_thread, listener_thread, process_thread, live_thread = bootstrap_runtime()
+
+    print("Press CTRL-C at any time to quit gracefully.")
+    try:
+        if config['verbose']:
+            if args.no_update:
+                print("Skipping update thread (--no-update)")
+            else:
+                print("Starting update thread")
+        if not args.no_update:
+            update_thread.start()
+            time.sleep(5)
+
+        if config['verbose']:
+            print("Starting listener thread")
+        listener_thread.start()
+
+        if config['verbose']:
+            print("Starting processor thread")
+        process_thread.start()
+
+        if config['side'] == 'server':
+            time.sleep(1)
+            if config['verbose']:
+                print("Starting live exporter thread")
+            live_thread.start()
+        else:
+            global live_ack
+            live_ack = True
+
+        while True:
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        print("CTRL-C detected, stopping.")
+        print("Please wait for all processes to report they are finished, in case they are currently active.")
+        global go
+        go = False
+
+
+if __name__ == "__main__":
+    main()
