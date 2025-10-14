@@ -31,11 +31,11 @@ try:
     import plugins.eddblink_plug
     import plugins.spansh_plug
     # New SQLAlchemy DB API (repo-local)
-    from db import load_config, make_engine_from_config, get_session_factory
+    from db import load_config, make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
 except ImportError:
     from tradedangerous import cli as trade, cache, tradedb, tradeenv, transfers, plugins, commands
     from tradedangerous.plugins import eddblink_plug, spansh_plug
-    from tradedangerous.db import load_config, make_engine_from_config, get_session_factory
+    from tradedangerous.db import load_config, make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
 
 from urllib import request
 from calendar import timegm
@@ -45,6 +45,8 @@ from packaging.version import Version
 
 _CFG = load_config()
 _ENGINE = make_engine_from_config(_CFG)
+_DATA_DIR = resolve_data_dir(_CFG)
+_BACKEND = (_ENGINE.dialect.name or "").lower()
 _SessionFactory: sessionmaker = get_session_factory(_ENGINE)
 _minute = 60
 _hour = 3600
@@ -59,49 +61,40 @@ def sa_session() -> Generator[Session, None, None]:
         yield s
         
 # Backend Specific Maintenance Routines
-def perform_db_maintenance_sa() -> None:
+def perform_db_maintenance_sa():
     """
-    Run light, safe maintenance depending on the active backend.
-
-    - SQLite:
-        * VACUUM
-        * PRAGMA optimize
-    - MariaDB:
-        * ANALYZE TABLE on hot tables (stats refresh)
-        * OPTIMIZE TABLE StationItem (reclaims space / defrag; quick on InnoDB if little to do)
-
-    Runs in its own transaction scope; prints concise status/errors and returns.
+    Periodic DB maintenance.
+    Order: PURGE (if enabled) -> backend-specific maintenance.
     """
-    dialect = _ENGINE.dialect.name.lower()
+    print(f'Performing database maintenance tasks. {datetime.now()}')
     try:
+        # 1) Purge first (optional)
+        purge_days = int(config.get('purge_days', 0) or 0)
+        if purge_days > 0:
+            purge_old_stationitems_sa(days=purge_days, batch_size=200_000)
+
+        # 2) Backend-specific maintenance (single place)
         with sa_session() as s:
-            if dialect == "sqlite":
-                # SQLite: these are safe and beneficial for long-running writers
-                s.execute(text("VACUUM"))
-                s.execute(text("PRAGMA optimize"))
-                print("DB maintenance (SQLite): VACUUM + PRAGMA optimize completed.")
-                return
-
+            dialect = (s.get_bind().dialect.name or "").lower()
             if dialect in ("mysql", "mariadb"):
-                # Keep it light: refresh stats on key tables; optional OPTIMIZE on StationItem
-                # NOTE: These statements are auto-committing in MySQL/MariaDB.
-                tables = ("StationItem", "Station", "Item")
-                for tbl in tables:
+                # Keep stats fresh; reclaim space on the hottest table.
+                for tbl in ("StationItem", "Station", "System", "Item"):
                     s.execute(text(f"ANALYZE TABLE {tbl}"))
-                # StationItem is the write-hot table; OPTIMIZE it occasionally
                 s.execute(text("OPTIMIZE TABLE StationItem"))
-                print("DB maintenance (MariaDB): ANALYZE {StationItem,Station,Item} + OPTIMIZE StationItem completed.")
-                return
-
-            # Other backends: no-ops for now
-            print(f"DB maintenance: backend '{dialect}' has no maintenance routine defined (skipped).")
-
+                s.commit()
+                print("[maint] MariaDB: ANALYZE (core tables) + OPTIMIZE StationItem done.")
+            elif dialect == "sqlite":
+                s.execute(text("PRAGMA optimize"))
+                s.commit()
+                s.close()
+                with sa_session() as s2:
+                    s2.execute(text("VACUUM"))
+                print("[maint] SQLite: PRAGMA optimize + VACUUM done.")
+            else:
+                print(f"[maint] Unknown dialect '{dialect}': skipping general maintenance.")
+        print(f'Database maintenance tasks completed. {datetime.now()}')
     except Exception as e:
-        # Non-fatal: just log and proceed
-        print("Error performing DB maintenance:")
-        print("-----------------------------")
-        print(e)
-        print("-----------------------------")
+        print("Error performing maintenance:", e)
 
 
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
@@ -614,36 +607,38 @@ def load_config():
     and the config_file will be updated to include all settings,
     preserving the existing (if any) settings' current values.
     """
-    
     write_config = False
     # Initialize config with default settings.
     # NOTE: Whitespace added for readability.
-    config = OrderedDict([                                                                          \
-                            ('side', 'client'),                                                     \
-                            ('verbose', True),                                                      \
-                            ('debug', False),                                                       \
-                            ('last_update', 0),                                                     \
-                            ('client_options', "clean"),                                            \
-                            ('check_update_every_x_min', 1440),                                       \
-                            ('export_live_every_x_min', 5),                                         \
-                            ('export_dump_every_x_hour', 24),                                       \
-                            ('db_maint_every_x_hour', 12),                                          \
-                            ('export_path', './tmp'),                                              \
-                            ('whitelist',                                                           \
-                                [                                                                   \
-                                    OrderedDict([('software', 'E:D Market Connector [Windows]')]),  \
-                                    OrderedDict([('software', 'E:D Market Connector [Mac OS]')]),   \
-                                    OrderedDict([('software', 'E:D Market Connector [Linux]')]),    \
-                                    OrderedDict([('software', 'EDDiscovery')])                      \
-                                ]                                                                   \
-                            )                                                                       \
-                        ])
-    
+    config = OrderedDict([
+        ('side', 'client'),
+        ('verbose', True),
+        ('debug', False),
+        ('last_update', 0),
+        ('client_options', "clean"),
+        ('check_update_every_x_min', 1440),
+        ('export_live_every_x_min', 5),
+        ('export_dump_every_x_hour', 24),
+        ('db_maint_every_x_hour', 12),
+        ('export_path', './tmp'),
+        # NEW: purge is disabled by default (0)
+        ('purge_days', 0),
+        ('whitelist',
+            [
+                OrderedDict([('software', 'E:D Market Connector [Windows]')]),
+                OrderedDict([('software', 'E:D Market Connector [Mac OS]')]),
+                OrderedDict([('software', 'E:D Market Connector [Linux]')]),
+                OrderedDict([('software', 'EDDiscovery')]),
+                OrderedDict([('software', 'EDDLite')]),
+            ]
+        ),
+    ])
+
     # Load the settings from the configuration file if it exists.
     if Path.exists(Path("tradedangerous-listener-config.json")):
         with open("tradedangerous-listener-config.json", "r") as fh:
             try:
-                temp = json.load(fh, object_pairs_hook = OrderedDict)
+                temp = json.load(fh, object_pairs_hook=OrderedDict)
                 # For each setting in config,
                 # if file setting exists and isn't the default,
                 # overwrite config setting with file setting.
@@ -654,22 +649,21 @@ def load_config():
                     else:
                         # If any settings don't exist in the config_file, need to update the file.
                         write_config = True
-            except:
+            except Exception:
                 # If, for some reason, there's an error trying to load
                 # the config_file, treat it as if it doesn't exist.
                 write_config = True
     else:
         # If the config_file doesn't exist, need to make it.
         write_config = True
-    
+
     # Write the current configuration to the file, if needed.
     if write_config:
         with open("tradedangerous-listener-config.json", "w") as config_file:
-            json.dump(config, config_file, indent = 4)
-    
-    # We now have a config that has valid values for all the settings, and a
-    # matching config_file so the settings are preserved for the next run.
+            json.dump(config, config_file, indent=4)
+
     return config
+
 
 
 def validate_config():
@@ -682,37 +676,29 @@ def validate_config():
     valid = True
     with open("tradedangerous-listener-config.json", "r") as fh:
         config_file = fh.read()
-    
-    # For each of these settings, if the value is invalid, mark the key.
-    
+
     # 'side' == 'client' || 'server'
     config['side'] = config['side'].lower()
-    if config['side'] != 'server' and config['side'] != 'client':
+    if config['side'] not in ('server', 'client'):
         valid = False
         config_file = config_file.replace('"side"', '"side_invalid"')
-    
+
     # 'verbose' == True || False
     if not isinstance(config["verbose"], bool):
         valid = False
         config_file = config_file.replace('"verbose"', '"verbose_invalid"')
-    
+
     # 'debug' == True || False
     if not isinstance(config["debug"], bool):
         valid = False
         config_file = config_file.replace('"debug"', '"debug_invalid"')
-    
-    # 'client_options' : eddblink options (`trade -P eddblink -O help`)
-    # (Only used when `config['side'] == 'client'`)
-    # For this one, rather than completely replace invalid values with
-    # the default, check to see if any of the values are valid and keep
-    # those, prepending the default values to the setting if they
-    # aren't already in the setting.
+
+    # 'client_options' : eddblink options
     if isinstance(config['client_options'], str):
         options = config['client_options'].split(',')
         valid_options = ""
         cmdenv = commands.CommandIndex().parse
         plugin_options = plugins.load(cmdenv(['trade', 'import', '--plug', 'eddblink', '-O', 'help']).plug, "ImportPlugin").pluginOptions.keys()
-        
         for option in options:
             if option in plugin_options:
                 if valid_options != "":
@@ -720,7 +706,6 @@ def validate_config():
                 valid_options += option
             else:
                 valid = False
-        
         if not valid:
             if valid_options.find("clean") == -1:
                 valid_options = f'clean,{valid_options}'
@@ -728,57 +713,62 @@ def validate_config():
     else:
         valid = False
         config_file = config_file.replace('"client_options"', '"client_options_invalid"')
-    
-    # 'check_update_every_x_min' >= 1 && <= 1440 (1 day)
+
+    # 'check_update_every_x_min' >= 1 && <= 1440
     if isinstance(config['check_update_every_x_min'], int):
-        if config['check_update_every_x_min'] < 1 or config['check_update_every_x_min'] > 1440:
+        if not (1 <= config['check_update_every_x_min'] <= 1440):
             valid = False
             config_file = config_file.replace('"check_update_every_x_min"', '"check_update_every_x_min_invalid"')
     else:
         valid = False
         config_file = config_file.replace('"check_update_every_x_min"', '"check_update_every_x_min_invalid"')
-    
-    # 'export_dump_every_x_hour' >= 1 && <= 24 (1 day)
-    # (Only used when `config['side'] == 'server'`)
+
+    # 'export_dump_every_x_hour' >= 1 && <= 24
     if isinstance(config['export_dump_every_x_hour'], int):
-        if config['export_dump_every_x_hour'] < 1 or config['export_dump_every_x_hour'] > 24:
+        if not (1 <= config['export_dump_every_x_hour'] <= 24):
             valid = False
             config_file = config_file.replace('"export_dump_every_x_hour"', '"export_dump_every_x_hour_invalid"')
     else:
         valid = False
         config_file = config_file.replace('"export_dump_every_x_hour"', '"export_dump_every_x_hour_invalid"')
-    
-    # 'export_live_every_x_min' >= 1 && <= 720 (12 hours)
-    # (Only used when `config['side'] == 'server'`)
+
+    # 'export_live_every_x_min' >= 1 && <= 720
     if isinstance(config['export_live_every_x_min'], int):
-        if config['export_live_every_x_min'] < 1 or config['export_live_every_x_min'] > 720:
+        if not (1 <= config['export_live_every_x_min'] <= 720):
             valid = False
             config_file = config_file.replace('"export_live_every_x_min"', '"export_live_every_x_min_invalid"')
     else:
         valid = False
         config_file = config_file.replace('"export_live_every_x_min"', '"export_live_every_x_min_invalid"')
-    
-    # 'db_maint_every_x_hour' >= 1 && <= 240 (10 days)
+
+    # 'db_maint_every_x_hour' >= 1 && <= 240
     if isinstance(config['db_maint_every_x_hour'], (int, float)):
-        if config['db_maint_every_x_hour'] < 1 or config['db_maint_every_x_hour'] > 240:
+        if not (1 <= config['db_maint_every_x_hour'] <= 240):
             valid = False
             config_file = config_file.replace('"db_maint_every_x_hour"', '"db_maint_every_x_hour_invalid"')
     else:
         valid = False
         config_file = config_file.replace('"db_maint_every_x_hour"', '"db_maint_every_x_hour_invalid"')
-    
-    # 'export_path': location (absolute or relative) of folder to save the exported listings files
-    # (Only used when `config['side'] == 'server'`)
+
+    # 'export_path' must exist
     if not Path.exists(Path(config['export_path'])):
         valid = False
         config_file = config_file.replace('"export_path"', '"export_path_invalid"')
-    
+
+    # NEW: 'purge_days' >= 0 (0 disables)
+    if isinstance(config.get('purge_days', 0), int):
+        if config['purge_days'] < 0:
+            valid = False
+            config_file = config_file.replace('"purge_days"', '"purge_days_invalid"')
+    else:
+        valid = False
+        config_file = config_file.replace('"purge_days"', '"purge_days_invalid"')
+
     if not valid:
-        # Before we reload the config to set the invalid values back to default,
-        # we need to write the changes we made to the file.
         with open("tradedangerous-listener-config.json", "w") as fh:
             fh.write(config_file)
         config = load_config()
+
 
 def db_locked_message(source: str)  -> None:
     print(f"[{source}] - DB locked, waiting for access.", end="\n")
@@ -1223,9 +1213,36 @@ def bootstrap_runtime():
 
     # Paths & config
     dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve()
-
     config = load_config()
-    if config['client_options'] == 'clean' or not Path(dataPath, 'TradeDangerous.db').exists():
+
+    summary = ensure_fresh_db(
+        backend=_ENGINE.dialect.name,
+        engine=_ENGINE,
+        data_dir=dataPath,    # or _DATA_DIR if you’ve resolved it separately
+        metadata=None,
+        rebuild=False,
+    )
+
+    if config.get("debug"):
+        print(
+            f"DB bootstrap: action={summary['action']} "
+            f"sane={summary['sane']} "
+            f"reason={summary.get('reason','ok')} "
+            f"backend={summary['backend']}"
+        )
+    
+    needs_bootstrap = (
+        config['client_options'] == 'clean'
+        or ensure_fresh_db(
+            backend=_BACKEND,
+            engine=_ENGINE,
+            data_dir=_DATA_DIR,
+            metadata=None,          # ORM metadata not required for the check
+            rebuild=False           # <-- never rebuild here; just report
+        ).get("action") == "needs_rebuild"
+    )
+
+    if needs_bootstrap:
         print("Initial run")
         trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', 'clean,solo'))
         config['client_options'] = 'all'
@@ -1376,6 +1393,36 @@ def export_dump_once_sa():
             time.sleep(0.5)
     listings_tmp.rename(listings_file)
     print(f"[export-dump-now] wrote {listings_file} in {datetime.now() - start}")
+
+def purge_old_stationitems_sa(days: int = 30, batch_size: int = 200_000):
+    """
+    Delete StationItem rows older than `days`, in batches.
+    NOTE: Purge only. No analyze/optimize/vacuum here.
+    """
+    if not isinstance(days, int) or days <= 0:
+        return {"deleted": 0, "cutoff": None, "skipped": True}
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    total = 0
+
+    with sa_session() as s:
+        DELETE_BATCH = text("""
+            DELETE FROM StationItem
+            WHERE modified < :cutoff
+            LIMIT :lim
+        """)
+        while True:
+            res = s.execute(DELETE_BATCH, {"cutoff": cutoff, "lim": batch_size})
+            s.commit()
+            deleted = getattr(res, "rowcount", 0)
+            if not deleted:
+                break
+            total += deleted
+            print(f"[purge] deleted {deleted:,} (total {total:,}) …")
+
+    print(f"[purge] completed: deleted {total:,} rows older than {cutoff} (>{days}d).")
+    return {"deleted": total, "cutoff": cutoff.isoformat(), "skipped": False}
+
 
 
 def parse_args():
