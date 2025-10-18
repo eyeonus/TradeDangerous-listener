@@ -621,6 +621,9 @@ def load_config():
         ('export_dump_every_x_hour', 24),
         ('db_maint_every_x_hour', 12),
         ('export_path', './tmp'),
+        # Added for EDDN compatibility with MP listener (kept even if unset)
+        ('eddn_url', None),
+        ('eddn_schema_ref', None),
         # NEW: purge is disabled by default (0)
         ('purge_days', 0),
         ('whitelist',
