@@ -8,9 +8,13 @@ import zlib
 import zmq
 import threading
 from datetime import datetime, timedelta
-import sqlite3
 import csv
 import codecs
+# TD SQLAlchemy session bootstrap (MariaDB-first; SQLite OK)
+from contextlib import contextmanager
+from typing import Generator
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import text
 
 # Make things easier for Tromador.
 # import ssl
@@ -19,15 +23,19 @@ import codecs
 
 try:
     import cache
+    import commands
     import trade
     import tradedb
     import tradeenv
     import transfers
     import plugins.eddblink_plug
     import plugins.spansh_plug
+    # New SQLAlchemy DB API (repo-local)
+    from db import load_config, make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
 except ImportError:
     from tradedangerous import cli as trade, cache, tradedb, tradeenv, transfers, plugins, commands
     from tradedangerous.plugins import eddblink_plug, spansh_plug
+    from tradedangerous.db import load_config, make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
 
 from urllib import request
 from calendar import timegm
@@ -35,12 +43,59 @@ from pathlib import Path
 from collections import defaultdict, namedtuple, deque, OrderedDict
 from packaging.version import Version
 
+_CFG = load_config()
+_ENGINE = make_engine_from_config(_CFG)
+_DATA_DIR = resolve_data_dir(_CFG)
+_BACKEND = (_ENGINE.dialect.name or "").lower()
+_SessionFactory: sessionmaker = get_session_factory(_ENGINE)
 _minute = 60
 _hour = 3600
 _SPANSH_FILE = "galaxy_stations.json"
 _SOURCE_URL = f'https://downloads.spansh.co.uk/{_SPANSH_FILE}'
-
 # print(f'Spansh import plugin source file is: {_SOURCE_URL}')
+
+@contextmanager
+def sa_session() -> Generator[Session, None, None]:
+    """Yield a SQLAlchemy Session bound to the TD engine (one per use)."""
+    with _SessionFactory() as s:
+        yield s
+        
+# Backend Specific Maintenance Routines
+def perform_db_maintenance_sa():
+    """
+    Periodic DB maintenance.
+    Order: PURGE (if enabled) -> backend-specific maintenance.
+    """
+    print(f'Performing database maintenance tasks. {datetime.now()}')
+    try:
+        # 1) Purge first (optional)
+        purge_days = int(config.get('purge_days', 0) or 0)
+        if purge_days > 0:
+            purge_old_stationitems_sa(days=purge_days, batch_size=200_000)
+
+        # 2) Backend-specific maintenance (single place)
+        with sa_session() as s:
+            dialect = (s.get_bind().dialect.name or "").lower()
+            if dialect in ("mysql", "mariadb"):
+                # Keep stats fresh; reclaim space on the hottest table.
+                for tbl in ("StationItem", "Station", "System", "Item"):
+                    s.execute(text(f"ANALYZE TABLE {tbl}"))
+                s.execute(text("OPTIMIZE TABLE StationItem"))
+                s.commit()
+                print("[maint] MariaDB: ANALYZE (core tables) + OPTIMIZE StationItem done.")
+            elif dialect == "sqlite":
+                s.execute(text("PRAGMA optimize"))
+                s.commit()
+                s.close()
+                with sa_session() as s2:
+                    s2.execute(text("VACUUM"))
+                print("[maint] SQLite: PRAGMA optimize + VACUUM done.")
+            else:
+                print(f"[maint] Unknown dialect '{dialect}': skipping general maintenance.")
+        print(f'Database maintenance tasks completed. {datetime.now()}')
+    except Exception as e:
+        print("Error performing maintenance:", e)
+
 
 # Copyright (C) Oliver 'kfsone' Smith <oliver@kfs.org> 2015
 #
@@ -289,27 +344,6 @@ class Listener(object):
 
 # End of 'kfsone' code.
 
-
-def db_execute(db, sql_cmd, args = None):
-    cur = db.cursor()
-    success = False
-    result = None
-    while go and not success:
-        try:
-            if args:
-                result = cur.execute(sql_cmd, args)
-            else:
-                result = cur.execute(sql_cmd)
-            success = True
-        except sqlite3.OperationalError as sqlOpError:
-            if "locked" not in str(sqlOpError):
-                success = True
-                print(f'{sqlOpError}')
-            else:
-                db_locked_message(f"de-'{sql_cmd[:20]}'")
-    return result
-
-
 # We do this because the Listener object must be in the same thread that's running get_batch().
 def get_messages():
     listener = Listener()
@@ -319,6 +353,8 @@ def get_messages():
 def check_update():
     """
     Checks for updates to the spansh dump.
+    If TDL_SKIP_SPANSH=1 is set in the environment, we skip the costly
+    spansh import/export step but still exercise the same busy/ack + dump path.
     """
     global update_busy, dump_busy, process_ack, live_ack, db_name, item_ids, system_ids, station_ids
     
@@ -343,8 +379,6 @@ def check_update():
             next_check += "s"
     
     now = round(time.time(), 0) - config['check_update_every_x_min']
-    dumpModded = 0
-    localModded = 0
     
     startup = True
     
@@ -374,19 +408,23 @@ def check_update():
                 
                 if config['verbose']:
                     print(f'local_mod_time: {local_mod_time}, last_modified: {last_modified}')
-                if local_mod_time < last_modified:
-                    if update_file.exists():
-                        update_file.unlink()
-                    print(f'Downloading prices from remote URL: {_SOURCE_URL}')
-                    try:
-                        transfers.download(tdb.tdenv, _SOURCE_URL, update_file)
-                    except Exception as e:  # pylint: disable=broad-exception-caught
-                        tdb.tdenv.WARN("Problem with download:\n    URL: {}\n    Error: {}", _SOURCE_URL, str(e))
-                        return False
-                    print(f'Download complete, saved to local file: "{update_file}"')
-                    os.utime(update_file, (last_modified, last_modified))
                 
-                maxage = ((datetime.now() - datetime.fromtimestamp(config["last_update"])) + timedelta(hours = 1))/timedelta(1)
+                # Download only if not skipping Spansh and local file older/new
+                skip_spansh = os.environ.get("TDL_SKIP_SPANSH") == "1"
+                if not skip_spansh:
+                    if local_mod_time < last_modified:
+                        if update_file.exists():
+                            update_file.unlink()
+                        print(f'Downloading prices from remote URL: {_SOURCE_URL}')
+                        try:
+                            transfers.download(tdb.tdenv, _SOURCE_URL, update_file)
+                        except Exception as e:  # pylint: disable=broad-exception-caught
+                            tdb.tdenv.WARN("Problem with download:\n    URL: {}\n    Error: {}", _SOURCE_URL, str(e))
+                            return False
+                        print(f'Download complete, saved to local file: "{update_file}"')
+                        os.utime(update_file, (last_modified, last_modified))
+                
+                maxage = ((datetime.now() - datetime.fromtimestamp(config.get("last_update", 0))) + timedelta(hours = 1))/timedelta(1)
                 options = '-'
                 if config['debug']:
                     options += 'w'
@@ -409,21 +447,29 @@ def check_update():
                 
                 print("Busy signal acknowledged, performing update.")
                 try:
-                    trade.main(('trade.py', 'import', '-P', 'spansh', '-O', f'file={update_file},maxage={maxage}', options))
-                    
-                    trade.main(('trade.py', 'export', '--path', f'{config["export_path"]}'))
-                    
-                    # Since there's been an update, we need to redo all this.
-                    if config['verbose']:
-                        print("Updating dictionaries...")
-                    db_name, item_ids, system_ids, station_ids = update_dicts()
-                    
-                    config['last_update'] = last_modified
-                    if config['debug']:
-                        print(f"last_update: {config['last_update']}, last_modified: {last_modified}")
-                    
-                    with open("tradedangerous-listener-config.json", "w") as config_file:
-                        json.dump(config, config_file, indent = 4)
+                    if skip_spansh:
+                        print("TEST MODE: TDL_SKIP_SPANSH=1 → skipping Spansh import/export; proceeding directly to listings.csv dump.")
+                    else:
+                        # Run the real Spansh import/export
+                        trade.main((
+                            'trade.py', 'import', '-P', 'spansh',
+                            '-O', f'file={update_file},maxage={maxage},skip_stationitems=1',
+                            options,
+                        ))
+                        # trade.main(('trade.py', 'export', '--path', f'{config["export_path"]}')) # Why export twice?
+                        
+                        # Since there's been an update, we need to redo all this.
+                        if config['verbose']:
+                            print("Updating dictionaries...")
+                        db_name, item_ids, system_ids, station_ids = update_dicts()
+                        
+                        # Only advance last_update when we actually processed the new dump
+                        config['last_update'] = last_modified
+                        if config['debug']:
+                            print(f"last_update: {config['last_update']}, last_modified: {last_modified}")
+                        
+                        with open("tradedangerous-listener-config.json", "w") as config_file:
+                            json.dump(config, config_file, indent = 4)
                     
                     now = round(time.time(), 0)
                 
@@ -434,13 +480,16 @@ def check_update():
                     continue
                 
                 if config['verbose']:
-                    print("Update complete, turning off busy signal.")
+                    print("Update complete (or skipped in TEST MODE), turning off busy signal.")
                 dump_busy = True
                 update_busy = False
                 
                 if config['debug']:
                     print("Beginning full listings export...")
-                export_dump()
+                # SA exporter
+                print("[update] calling export_dump_sa()")
+                export_dump_sa()
+                print("[update] export_dump_sa() finished")
             
             else:
                 print(f'No update, checking again in {next_check}.')
@@ -451,6 +500,7 @@ def check_update():
         time.sleep(1)
     
     print("Update checker reporting shutdown.")
+
 
 
 def check_server():
@@ -557,36 +607,41 @@ def load_config():
     and the config_file will be updated to include all settings,
     preserving the existing (if any) settings' current values.
     """
-    
     write_config = False
     # Initialize config with default settings.
     # NOTE: Whitespace added for readability.
-    config = OrderedDict([                                                                          \
-                            ('side', 'client'),                                                     \
-                            ('verbose', True),                                                      \
-                            ('debug', False),                                                       \
-                            ('last_update', 0),                                                     \
-                            ('client_options', "clean"),                                            \
-                            ('check_update_every_x_min', 1440),                                       \
-                            ('export_live_every_x_min', 5),                                         \
-                            ('export_dump_every_x_hour', 24),                                       \
-                            ('db_maint_every_x_hour', 12),                                          \
-                            ('export_path', './tmp'),                                              \
-                            ('whitelist',                                                           \
-                                [                                                                   \
-                                    OrderedDict([('software', 'E:D Market Connector [Windows]')]),  \
-                                    OrderedDict([('software', 'E:D Market Connector [Mac OS]')]),   \
-                                    OrderedDict([('software', 'E:D Market Connector [Linux]')]),    \
-                                    OrderedDict([('software', 'EDDiscovery')])                      \
-                                ]                                                                   \
-                            )                                                                       \
-                        ])
-    
+    config = OrderedDict([
+        ('side', 'client'),
+        ('verbose', True),
+        ('debug', False),
+        ('last_update', 0),
+        ('client_options', "clean"),
+        ('check_update_every_x_min', 1440),
+        ('export_live_every_x_min', 5),
+        ('export_dump_every_x_hour', 24),
+        ('db_maint_every_x_hour', 12),
+        ('export_path', './tmp'),
+        # Added for EDDN compatibility with MP listener (kept even if unset)
+        ('eddn_url', None),
+        ('eddn_schema_ref', None),
+        # NEW: purge is disabled by default (0)
+        ('purge_days', 0),
+        ('whitelist',
+            [
+                OrderedDict([('software', 'E:D Market Connector [Windows]')]),
+                OrderedDict([('software', 'E:D Market Connector [Mac OS]')]),
+                OrderedDict([('software', 'E:D Market Connector [Linux]')]),
+                OrderedDict([('software', 'EDDiscovery')]),
+                OrderedDict([('software', 'EDDLite')]),
+            ]
+        ),
+    ])
+
     # Load the settings from the configuration file if it exists.
     if Path.exists(Path("tradedangerous-listener-config.json")):
         with open("tradedangerous-listener-config.json", "r") as fh:
             try:
-                temp = json.load(fh, object_pairs_hook = OrderedDict)
+                temp = json.load(fh, object_pairs_hook=OrderedDict)
                 # For each setting in config,
                 # if file setting exists and isn't the default,
                 # overwrite config setting with file setting.
@@ -597,22 +652,21 @@ def load_config():
                     else:
                         # If any settings don't exist in the config_file, need to update the file.
                         write_config = True
-            except:
+            except Exception:
                 # If, for some reason, there's an error trying to load
                 # the config_file, treat it as if it doesn't exist.
                 write_config = True
     else:
         # If the config_file doesn't exist, need to make it.
         write_config = True
-    
+
     # Write the current configuration to the file, if needed.
     if write_config:
         with open("tradedangerous-listener-config.json", "w") as config_file:
-            json.dump(config, config_file, indent = 4)
-    
-    # We now have a config that has valid values for all the settings, and a
-    # matching config_file so the settings are preserved for the next run.
+            json.dump(config, config_file, indent=4)
+
     return config
+
 
 
 def validate_config():
@@ -625,37 +679,29 @@ def validate_config():
     valid = True
     with open("tradedangerous-listener-config.json", "r") as fh:
         config_file = fh.read()
-    
-    # For each of these settings, if the value is invalid, mark the key.
-    
+
     # 'side' == 'client' || 'server'
     config['side'] = config['side'].lower()
-    if config['side'] != 'server' and config['side'] != 'client':
+    if config['side'] not in ('server', 'client'):
         valid = False
         config_file = config_file.replace('"side"', '"side_invalid"')
-    
+
     # 'verbose' == True || False
     if not isinstance(config["verbose"], bool):
         valid = False
         config_file = config_file.replace('"verbose"', '"verbose_invalid"')
-    
+
     # 'debug' == True || False
     if not isinstance(config["debug"], bool):
         valid = False
         config_file = config_file.replace('"debug"', '"debug_invalid"')
-    
-    # 'client_options' : eddblink options (`trade -P eddblink -O help`)
-    # (Only used when `config['side'] == 'client'`)
-    # For this one, rather than completely replace invalid values with
-    # the default, check to see if any of the values are valid and keep
-    # those, prepending the default values to the setting if they
-    # aren't already in the setting.
+
+    # 'client_options' : eddblink options
     if isinstance(config['client_options'], str):
         options = config['client_options'].split(',')
         valid_options = ""
         cmdenv = commands.CommandIndex().parse
         plugin_options = plugins.load(cmdenv(['trade', 'import', '--plug', 'eddblink', '-O', 'help']).plug, "ImportPlugin").pluginOptions.keys()
-        
         for option in options:
             if option in plugin_options:
                 if valid_options != "":
@@ -663,7 +709,6 @@ def validate_config():
                 valid_options += option
             else:
                 valid = False
-        
         if not valid:
             if valid_options.find("clean") == -1:
                 valid_options = f'clean,{valid_options}'
@@ -671,336 +716,254 @@ def validate_config():
     else:
         valid = False
         config_file = config_file.replace('"client_options"', '"client_options_invalid"')
-    
-    # 'check_update_every_x_min' >= 1 && <= 1440 (1 day)
+
+    # 'check_update_every_x_min' >= 1 && <= 1440
     if isinstance(config['check_update_every_x_min'], int):
-        if config['check_update_every_x_min'] < 1 or config['check_update_every_x_min'] > 1440:
+        if not (1 <= config['check_update_every_x_min'] <= 1440):
             valid = False
             config_file = config_file.replace('"check_update_every_x_min"', '"check_update_every_x_min_invalid"')
     else:
         valid = False
         config_file = config_file.replace('"check_update_every_x_min"', '"check_update_every_x_min_invalid"')
-    
-    # 'export_dump_every_x_hour' >= 1 && <= 24 (1 day)
-    # (Only used when `config['side'] == 'server'`)
+
+    # 'export_dump_every_x_hour' >= 1 && <= 24
     if isinstance(config['export_dump_every_x_hour'], int):
-        if config['export_dump_every_x_hour'] < 1 or config['export_dump_every_x_hour'] > 24:
+        if not (1 <= config['export_dump_every_x_hour'] <= 24):
             valid = False
             config_file = config_file.replace('"export_dump_every_x_hour"', '"export_dump_every_x_hour_invalid"')
     else:
         valid = False
         config_file = config_file.replace('"export_dump_every_x_hour"', '"export_dump_every_x_hour_invalid"')
-    
-    # 'export_live_every_x_min' >= 1 && <= 720 (12 hours)
-    # (Only used when `config['side'] == 'server'`)
+
+    # 'export_live_every_x_min' >= 1 && <= 720
     if isinstance(config['export_live_every_x_min'], int):
-        if config['export_live_every_x_min'] < 1 or config['export_live_every_x_min'] > 720:
+        if not (1 <= config['export_live_every_x_min'] <= 720):
             valid = False
             config_file = config_file.replace('"export_live_every_x_min"', '"export_live_every_x_min_invalid"')
     else:
         valid = False
         config_file = config_file.replace('"export_live_every_x_min"', '"export_live_every_x_min_invalid"')
-    
-    # 'db_maint_every_x_hour' >= 1 && <= 240 (10 days)
+
+    # 'db_maint_every_x_hour' >= 1 && <= 240
     if isinstance(config['db_maint_every_x_hour'], (int, float)):
-        if config['db_maint_every_x_hour'] < 1 or config['db_maint_every_x_hour'] > 240:
+        if not (1 <= config['db_maint_every_x_hour'] <= 240):
             valid = False
             config_file = config_file.replace('"db_maint_every_x_hour"', '"db_maint_every_x_hour_invalid"')
     else:
         valid = False
         config_file = config_file.replace('"db_maint_every_x_hour"', '"db_maint_every_x_hour_invalid"')
-    
-    # 'export_path': location (absolute or relative) of folder to save the exported listings files
-    # (Only used when `config['side'] == 'server'`)
+
+    # 'export_path' must exist
     if not Path.exists(Path(config['export_path'])):
         valid = False
         config_file = config_file.replace('"export_path"', '"export_path_invalid"')
-    
+
+    # NEW: 'purge_days' >= 0 (0 disables)
+    if isinstance(config.get('purge_days', 0), int):
+        if config['purge_days'] < 0:
+            valid = False
+            config_file = config_file.replace('"purge_days"', '"purge_days_invalid"')
+    else:
+        valid = False
+        config_file = config_file.replace('"purge_days"', '"purge_days_invalid"')
+
     if not valid:
-        # Before we reload the config to set the invalid values back to default,
-        # we need to write the changes we made to the file.
         with open("tradedangerous-listener-config.json", "w") as fh:
             fh.write(config_file)
         config = load_config()
+
 
 def db_locked_message(source: str)  -> None:
     print(f"[{source}] - DB locked, waiting for access.", end="\n")
     time.sleep(1)
 
-def process_messages():
+def process_messages_sa():
+    """
+    Consume MarketPrice entries and upsert rows via SQLAlchemy (threaded mode).
+    Mirrors legacy behavior on unknown systems/stations: log and skip, keep running.
+    Performs periodic DB maintenance and respects busy flags.
+    """
     global process_ack, update_busy, dump_busy, live_busy, db_name, item_ids, system_ids, station_ids
-    
-    tdb = tradedb.TradeDB(load = False)
-    db = tdb.getDB()
-    # Place the database into autocommit mode to avoid issues with
-    # sqlite3 doing automatic transactions.
-    db.isolation_level = None
-    curs = db.cursor()
-    
-    # same SQL every time
-    deleteStationItemEntry = "DELETE FROM StationItem WHERE station_id = ?"
-    insertStationItemEntry = (
-        "INSERT OR IGNORE INTO StationItem("
+
+    DELETE_STATION_ITEMS = text("DELETE FROM StationItem WHERE station_id = :station_id")
+    INSERT_STATION_ITEM = text(
+        "INSERT INTO StationItem ("
         " station_id, item_id, modified,"
         " demand_price, demand_units, demand_level,"
         " supply_price, supply_units, supply_level, from_live)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"
+        " VALUES (:station_id, :item_id, :modified,"
+        " :demand_price, :demand_units, :demand_level,"
+        " :supply_price, :supply_units, :supply_level, 1)"
     )
-    updateItemAveragePrice = "UPDATE Item SET avg_price = ? WHERE item_id = ?"
-    
-    getOldStationInfo = (
-        "SELECT name, ls_from_star,blackmarket, max_pad_size, "
-        "market, shipyard, outfitting, rearm, refuel, repair, "
-        "planetary, type_id from Station WHERE station_id = ?"
+    UPDATE_ITEM_AVG = text("UPDATE Item SET avg_price = :avg_price WHERE item_id = :item_id")
+    GET_STATION_BY_ID = text("SELECT station_id FROM Station WHERE station_id = :station_id")
+    GET_OLD_STATION_INFO = text(
+        "SELECT name, ls_from_star, blackmarket, max_pad_size, "
+        "       market, shipyard, outfitting, rearm, refuel, repair, "
+        "       planetary, type_id, system_id "
+        "FROM Station WHERE station_id = :sid"
     )
-    insertNewStation = (
-        "INSERT OR IGNORE INTO Station("
+    INSERT_NEW_STATION = text(
+        "INSERT INTO Station ("
         " station_id, name, system_id, ls_from_star,"
         " blackmarket, max_pad_size, market, shipyard,"
         " modified, outfitting, rearm, refuel, repair,"
         " planetary, type_id)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        " VALUES (:station_id, :name, :system_id, :ls_from_star,"
+        " :blackmarket, :max_pad_size, :market, :shipyard,"
+        " :modified, :outfitting, :rearm, :refuel, :repair,"
+        " :planetary, :type_id)"
     )
-    removeOldStation = "DELETE FROM Station WHERE station_id = ?"
-    moveStationToNewSystem = "UPDATE Station SET system_id = ?, name = ? WHERE station_id = ?"
-    
-    # We want to perform some automatic DB maintenance when running for long periods.
-    maintenance_time = time.time() + (config['db_maint_every_x_hour'] * _hour)
-    
+    DELETE_STATION = text("DELETE FROM Station WHERE station_id = :sid")
+    MOVE_STATION = text("UPDATE Station SET system_id = :system_id, name = :name WHERE station_id = :sid")
+    GET_SYSTEM_ID_BY_NAME = text("SELECT system_id FROM System WHERE UPPER(name) = :n")
+
+    # Maintenance cadence
+    maintenance_deadline = time.time() + (config['db_maint_every_x_hour'] * _hour)
+
+    def resolve_system_id(sess, system_name_upper: str):
+        """Try dict first, then DB lookup by name (case-insensitive)."""
+        sid = system_ids.get(system_name_upper)
+        if sid:
+            return sid
+        row = sess.execute(GET_SYSTEM_ID_BY_NAME, {"n": system_name_upper}).first()
+        return row[0] if row else None
+
     while go:
-        
-        # We don't want the threads interfering with each other,
-        # so pause this one if either the update checker or
-        # listings exporter report that they're active.
+        # Respect busy flags (threaded parity)
         if update_busy or dump_busy or live_busy:
             print("Message processor acknowledging busy signal.")
             process_ack = True
             while (update_busy or dump_busy or live_busy) and go:
                 time.sleep(1)
-            # Just in case we caught the shutdown command while waiting.
             if not go:
                 break
             process_ack = False
             print("Busy signal off, message processor resuming.")
-        
-        if time.time() >= maintenance_time:
-            print(f'Performing database maintenance tasks. {str(datetime.now())}')
+
+        # Maintenance
+        if time.time() >= maintenance_deadline:
             try:
-                db_execute(db, "VACUUM")
-                db_execute(db, "PRAGMA optimize")
+                print(f'Performing database maintenance tasks. {str(datetime.now())}')
+                perform_db_maintenance_sa()
                 print(f'Database maintenance tasks completed. {str(datetime.now())}')
             except Exception as e:
-                print("Error performing maintenance:")
-                print("-----------------------------")
-                print(e)
-                print("-----------------------------")
-            
-            maintenance_time = time.time() + (config['db_maint_every_x_hour'] * _hour)
-        
-        # Either get the first message in the queue,
-        # or go to sleep and wait if there aren't any.
+                print("Error performing maintenance:", e)
+            maintenance_deadline = time.time() + (config['db_maint_every_x_hour'] * _hour)
+
+        # Next message
         try:
             entry = q.popleft()
         except IndexError:
             time.sleep(1)
             continue
-        
-        # Get the station_id using the system and station names.
+
         system = entry.system.upper()
         station = entry.station.upper()
-        market_id = entry.market_id
+        station_id = entry.market_id
         modified = entry.timestamp.replace('T', ' ').replace('Z', '')
         commodities = entry.commodities
-        
+
         if config['debug']:
             print(f'Processing: {system}/{station} timestamp:{modified}')
-        
-        # All the stations should be stored using the market_id.
-        exists = None
-        success = False
-        while not success:
-            try:
-                exists = curs.execute("SELECT station_id FROM Station WHERE station_id = ?", (market_id,)).fetchone()
-                success = True
-            except sqlite3.OperationalError:
-                db_locked_message("pm-get station_id")
-        
-        if not exists:
-            station_id = station_ids.get(f'{system}/{station}')
-            system_id = system_ids.get(system)
-            if not station_id:
-                # Mobile stations are stored in the dict a bit differently.
-                station_id = station_ids.get(f'MEGASHIP/{station}')
-                if station_id and system_id:
-                    if config['verbose']:
-                        print(f'Megaship station, updating system to {system}')
-                    # Update the system the station is in, in case it has changed.
-                    success = False
-                    while not success:
-                        try:
-                            curs.execute("BEGIN IMMEDIATE")
-                            curs.execute(moveStationToNewSystem, (system_id, entry.station, station_id))
-                            db.commit()
-                            success = True
-                        except sqlite3.IntegrityError:
-                            if config['verbose']:
-                                print(f'ERROR: Not found in Systems: {system}/{station}')
-                            continue
-                        except sqlite3.OperationalError:
-                            db_locked_message("pm-move megaship")
-                else:
-                    # If we can't find it by any of these means, it must be a 'new' station.
-                    if config['verbose']:
-                        print(f'Not found in Stations: {system}/{station}, inserting into DB.')
-                    # Add the new Station with '?' for all unknowns.
-                    success = False
-                    while not success:
-                        try:
-                            curs.execute("BEGIN IMMEDIATE")
-                            curs.execute(insertNewStation, (market_id, entry.station, system_id, 999999,
-                                                            '?', '?', 'Y', '?', modified, '?',
-                                                            '?', '?', '?', '?', 0))
-                            db.commit()
-                            success = True
-                        except sqlite3.IntegrityError as e:
-                            if config['verbose']:
-                                print(e)
-                            continue
-                        except sqlite3.OperationalError:
-                            db_locked_message("pm-add new station")
-                            continue
-                    station_ids[f'{system}/{station}'] = market_id
-            if station_id and (station_id != market_id):
-                success = False
-                while not success:
-                    try:
-                        result = curs.execute(getOldStationInfo, (station_id,))
-                        if result:
-                            nm, ls, bm, mps, mk, sy, of, ra, rf, rp, pl, ti = result.fetchone()
-                            curs.execute("BEGIN IMMEDIATE")
-                            curs.execute(removeOldStation, (station_id,))
-                            curs.execute(insertNewStation, (market_id, nm, system_id, ls, bm,
-                                         mps, mk, sy, modified, of, ra, rf, rp, pl, ti))
 
-                        db.commit()
-                        success = True
-                    except TypeError:
-                        continue
-                    except sqlite3.IntegrityError as e:
-                        if config['verbose']:
-                            print(e)
-                        continue
-                    except sqlite3.OperationalError as e:
-                        db_locked_message(f'pm-fix station_id {e}')
-        
-        station_id = market_id
-        
-        itemList = []
-        avgList = []
+        # Prepare item rows
+        item_rows, avg_rows = [], []
         for commodity in commodities:
             if commodity['sellPrice'] == 0 and commodity['buyPrice'] == 0:
-                # Skip blank entries
                 continue
-            # Get fdev_id using commodity name from message.
             item_edid = db_name.get(commodity['name'].lower())
             if not item_edid:
                 if config['debug']:
                     print(f"Ignoring item: {commodity['name']}")
                 continue
-            # Some items, mostly recently added items, are found in db_name but not in item_ids
-            # (This is entirely EDDB.io's fault.)
-            item_id = item_ids.get(item_edid)
-            if not item_id:
-                item_id = int(item_edid)
-            
-            itemList.append((
-                station_id, item_id, modified,
-                commodity['sellPrice'], commodity['demand'],
-                commodity['demandBracket'] if commodity['demandBracket'] != '' else -1,
-                commodity['buyPrice'], commodity['stock'],
-                commodity['stockBracket'] if commodity['stockBracket'] != '' else -1,
-            ))
-            # We only "need" to update the avg_price for the few items not included in
-            # EDDB.io's API, but might as well do it for all of them.
-            avgList.append((commodity['meanPrice'], item_id))
-        
-        success = False
-        while not success:
-            try:
-                curs.execute("BEGIN IMMEDIATE")
-                success = True
-            except sqlite3.OperationalError:
-                db_locked_message("pm-update station's market data")
-        
-        curs.execute(deleteStationItemEntry, (station_id,))
-        
-        for item in itemList:
-            try:
-                curs.execute(insertStationItemEntry, item)
-            except Exception as e:
-                if config['debug']:
-                    print(f"Error '{str(e)}' when inserting item:\n\t(Not in DB\'s Item table?) fdev_id: {str(item[1])}")
-        
-        for avg in avgList:
-            try:
-                curs.execute(updateItemAveragePrice, avg)
-            except Exception as e:
-                if config['debug']:
-                    print(f"Error '{str(e)}' when inserting average: {str(avg)}")
-        
-        success = False
-        while not success:
-            try:
-                db.commit()
-                success = True
-            except sqlite3.OperationalError:
-                db_locked_message("pm-commit station's market update")
-        
-        if config['verbose']:
-            print(f'Updated {system}/{station}, station_id:\'{station_id}\', from {entry.software} v{entry.version}')
-        else:
-            print(f'Updated {system}/{station}')
-    
-    print("Message processor reporting shutdown.")
+            item_id = item_ids.get(item_edid) or int(item_edid)
+            item_rows.append({
+                "station_id": station_id, "item_id": item_id, "modified": modified,
+                "demand_price": commodity['sellPrice'], "demand_units": commodity['demand'],
+                "demand_level": (commodity['demandBracket'] if commodity['demandBracket'] != '' else -1),
+                "supply_price": commodity['buyPrice'], "supply_units": commodity['stock'],
+                "supply_level": (commodity['stockBracket'] if commodity['stockBracket'] != '' else -1),
+            })
+            avg_rows.append({"avg_price": commodity['meanPrice'], "item_id": item_id})
 
+        from_megaship = f"MEGASHIP/{station}"
 
-def fetchIter(cursor, arraysize = 1000):
-    """
-    An iterator that uses fetchmany to keep memory usage down
-    and speed up the time to retrieve the results dramatically.
-    """
-    while True:
         try:
-            results = cursor.fetchmany(arraysize)
-        except AttributeError as e:
-            print(e)
-            break
-        
-        if not results:
-            break
-        for result in results:
-            yield result
+            with sa_session() as s:
+                with s.begin():
+                    # Ensure station exists or can be added, but only if we know system_id
+                    exists = s.execute(GET_STATION_BY_ID, {"station_id": station_id}).first()
+                    if not exists:
+                        sys_id = resolve_system_id(s, system)
+                        if sys_id is None:
+                            # Legacy parity: we cannot create Station without a system_id → log and skip.
+                            print(f"WARNING: system not found for station insert; skipping: {system}/{station} (market_id={station_id})")
+                            continue
+
+                        maybe_old = station_ids.get(from_megaship)
+                        if maybe_old:
+                            if config['verbose']:
+                                print(f'Megaship station, updating system to {system}')
+                            s.execute(MOVE_STATION, {"system_id": sys_id, "name": entry.station, "sid": maybe_old})
+                        else:
+                            if config['verbose']:
+                                print(f'Not found in Stations: {system}/{station}, inserting into DB.')
+                            s.execute(INSERT_NEW_STATION, {
+                                "station_id": station_id, "name": entry.station, "system_id": sys_id,
+                                "ls_from_star": 999999, "blackmarket": '?', "max_pad_size": '?',
+                                "market": 'Y', "shipyard": '?', "modified": modified, "outfitting": '?',
+                                "rearm": '?', "refuel": '?', "repair": '?', "planetary": '?', "type_id": 0,
+                            })
+                            station_ids[f'{system}/{station}'] = station_id
+
+                    # Migrate old station_id mapping if needed (parity with legacy)
+                    old_sid = station_ids.get(f'{system}/{station}')
+                    if old_sid and old_sid != station_id:
+                        res = s.execute(GET_OLD_STATION_INFO, {"sid": old_sid}).first()
+                        if res:
+                            (nm, ls, bm, mps, mk, sy, of, ra, rf, rp, pl, ti, old_sys_id) = res
+                            s.execute(DELETE_STATION, {"sid": old_sid})
+                            s.execute(INSERT_NEW_STATION, {
+                                "station_id": station_id, "name": nm, "system_id": old_sys_id,
+                                "ls_from_star": ls, "blackmarket": bm, "max_pad_size": mps, "market": mk,
+                                "shipyard": sy, "modified": modified, "outfitting": of, "rearm": ra, "refuel": rf,
+                                "repair": rp, "planetary": pl, "type_id": ti,
+                            })
+
+                    # Replace market rows
+                    s.execute(DELETE_STATION_ITEMS, {"station_id": station_id})
+                    if item_rows:
+                        s.execute(INSERT_STATION_ITEM, item_rows)
+                    if avg_rows:
+                        s.execute(UPDATE_ITEM_AVG, avg_rows)
+
+            if config['verbose']:
+                print(f"Updated {system}/{station}, station_id:'{station_id}', from {entry.software} v{entry.version}")
+            else:
+                print(f'Updated {system}/{station}')
+
+        except Exception as e:
+            # Keep processing on any unexpected DB error; log and continue
+            print(f"ERROR processing {system}/{station} (market_id={station_id}): {e}")
+
+    print("Message processor (SA) reporting shutdown.")
 
 
-def export_live():
+
+def export_live_sa():
     """
-    Creates a "listings-live.csv" file in "export_path" every X seconds,
-    as defined in the configuration file.
-    Only runs when program configured as server.
+    Emit listings-live.csv from StationItem WHERE from_live = 1.
+    Preserves existing busy-signal behaviour.
     """
     global live_ack, live_busy, process_ack, dump_busy, update_busy
-    
-    tdb = tradedb.TradeDB(load = False)
-    db = tdb.getDB()
+
     listings_file = (Path(config['export_path']).resolve() / Path("listings-live.csv"))
     listings_tmp = listings_file.with_suffix(".tmp")
     print(f'Live listings will be exported to: \n\t{listings_file}')
-    
+
     now = time.time()
     while go:
-        # Wait until the time specified in the "export_live_every_x_min" config
-        # before doing an export, watch for busy signal or shutdown signal
-        # while waiting.
         while time.time() < now + (config['export_live_every_x_min'] * _minute):
             if not go:
                 break
@@ -1009,76 +972,74 @@ def export_live():
                 live_ack = True
                 while (dump_busy or update_busy) and go:
                     time.sleep(1)
-                # Just in case we caught the shutdown command while waiting.
                 if not go:
                     break
                 live_ack = False
                 print("Busy signal off, live listings exporter resuming.")
                 now = time.time()
-            
             time.sleep(1)
-        
-        # We may be here because we broke out of the waiting loop,
-        # so we need to see if we lost go and quit the main loop if so.
+
         if not go:
             break
-        
+
         start = datetime.now()
-        
         print(f'Live listings exporter sending busy signal. {start}')
         live_busy = True
-        # We don't need to wait for acknowledgement from the dump exporter,
-        # because it waits for one from this, and this won't acknowledge
-        # until it's finished exporting.
         while not process_ack:
             if not go:
                 break
+            time.sleep(0.05)
         print("Busy signal acknowledged, getting live listings for export.")
-        cursor = None
+
+        # listings-live.csv
+        SELECT_LIVE = text("""
+            SELECT
+                station_id,
+                item_id,
+                demand_price  AS sell_price,
+                demand_units  AS demand,
+                demand_level  AS demand_bracket,
+                supply_price  AS buy_price,
+                supply_units  AS supply,
+                supply_level  AS supply_bracket,
+                modified
+            FROM StationItem
+            WHERE from_live = 1
+            ORDER BY station_id, item_id
+""")
+
+
         try:
-            cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem WHERE from_live = 1 ORDER BY station_id, item_id"))
-        except sqlite3.DatabaseError as e:
+            with sa_session() as s:
+                result = s.execute(SELECT_LIVE.execution_options(stream_results=True))
+                with open(str(listings_tmp), "w") as f:
+                    f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
+                    lineNo = 1
+                    for row in result:
+                        if not go:
+                            break
+                        station_id, commodity_id = str(row[0]), str(row[1])
+                        sell_price, demand, demand_bracket = str(row[2]), str(row[3]), str(row[4])
+                        buy_price, supply, supply_bracket = str(row[5]), str(row[6]), str(row[7])
+                        ts = str(row[8]).split('.')[0]
+                        collected_at = str(timegm(datetime.strptime(ts, '%Y-%m-%d %H:%M:%S').timetuple()))
+                        listing = (f'{station_id},{commodity_id},{supply},{supply_bracket},{buy_price},{sell_price},'
+                                   f'{demand},{demand_bracket},{collected_at}')
+                        f.write(f'{lineNo},{listing}\n'); lineNo += 1
+        except Exception as e:
             print(e)
             live_busy = False
             continue
-        except AttributeError as e:
-            print(f'Got Attribute error trying to fetch StationItems: {str(e)}')
-            print(cursor)
-            live_busy = False
-            continue
-        
-        print(f"Exporting 'listings-live.csv'. (Got listings in {datetime.now() - start})")
-        with open(str(listings_tmp), "w") as f:
-            f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
-            lineNo = 1
-            for result in cursor:
-                # If we lose go during export, we need to abort.
-                if not go:
-                    break
-                station_id = str(result[0])
-                commodity_id = str(result[1])
-                sell_price = str(result[2])
-                demand = str(result[3])
-                demand_bracket = str(result[4])
-                buy_price = str(result[5])
-                supply = str(result[6])
-                supply_bracket = str(result[7])
-                collected_at = str(timegm(datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
-                listing = (f'{station_id},{commodity_id},{supply},{supply_bracket},{buy_price},{sell_price},'
-                           f'{demand},{demand_bracket},{collected_at}')
-                f.write(f'{lineNo},{listing}\n')
-                lineNo += 1
-        
+
         if config['verbose']:
             print('Live listings exporter finished with database, releasing lock.')
         live_busy = False
-        
-        # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it.
+
         if not go:
-            listings_tmp.unlink()
+            listings_tmp.unlink(missing_ok=True)
             print("Export aborted, received shutdown signal.")
             break
-        
+
         while listings_file.exists():
             try:
                 listings_file.unlink()
@@ -1086,88 +1047,79 @@ def export_live():
                 time.sleep(1)
         listings_tmp.rename(listings_file)
         print(f'Export completed in {datetime.now() - start}')
-        
         now = time.time()
+
     print("Live listings exporter reporting shutdown.")
 
 
-def export_dump():
+def export_dump_sa():
     """
-    Creates a "listings.csv" file in "export_path" every X seconds,
-    as defined in the configuration file.
-    Only runs when program configured as server.
+    Emit listings.csv from all StationItem rows; reset from_live=0 beforehand.
+    Preserves existing busy-signal behaviour.
     """
     global dump_busy, process_ack, live_ack
-    
-    tdb = tradedb.TradeDB(load = False)
-    db = tdb.getDB()
+
     listings_file = (Path(config['export_path']).resolve() / Path("listings.csv"))
     listings_tmp = listings_file.with_suffix(".tmp")
     print(f'Listings will be exported to: \n\t{listings_file}')
-    
+
     start = datetime.now()
-    
     print(f'Listings exporter sending busy signal. {start}')
     dump_busy = True
-    
+
     while not (process_ack and live_ack):
         if not go:
             break
         time.sleep(1)
-    
+
     print("Busy signal acknowledged, getting listings for export.")
-    cursor = None
-    success = False
-    while not success:
-        try:
-            # Reset the live (i.e. since the last dump) flag for all StationItems
-            db_execute(db, "UPDATE StationItem SET from_live = 0")
-            db.commit()
-            cursor = fetchIter(db_execute(db, "SELECT * FROM StationItem ORDER BY station_id, item_id"))
-            success = True
-        except sqlite3.OperationalError:
-            db_locked_message("ed-get market data for full export")
-        except sqlite3.DatabaseError as e:
-            print("Aborting export:")
-            print(e)
-            dump_busy = False
-            return
-        except AttributeError as e:
-            print("Aborting export:")
-            print(f'Got Attribute error trying to fetch StationItems: {str(e)}')
-            print(cursor)
-            dump_busy = False
-            return
-    
-    print(f"Exporting 'listings.csv'. (Got listings in {datetime.now() - start})")
-    with open(str(listings_tmp), "w") as f:
-        f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
-        lineNo = 1
-        for result in cursor:
-            # If we lose go during export, we need to abort.
-            if not go:
-                break
-            station_id = str(result[0])
-            commodity_id = str(result[1])
-            sell_price = str(result[2])
-            demand = str(result[3])
-            demand_bracket = str(result[4])
-            buy_price = str(result[5])
-            supply = str(result[6])
-            supply_bracket = str(result[7])
-            collected_at = str(timegm(datetime.strptime(result[8].split('.')[0], '%Y-%m-%d %H:%M:%S').timetuple()))
-            listing = (f'{station_id},{commodity_id},{supply},{supply_bracket},{buy_price},{sell_price},'
-                       f'{demand},{demand_bracket},{collected_at}')
-            f.write(f'{lineNo},{listing}\n')
-            lineNo += 1
-    
+
+    UPDATE_CLEAR_LIVE = text("UPDATE StationItem SET from_live = 0")
+    SELECT_ALL = text("""
+        SELECT
+            station_id,
+            item_id,
+            demand_price  AS sell_price,
+            demand_units  AS demand,
+            demand_level  AS demand_bracket,
+            supply_price  AS buy_price,
+            supply_units  AS supply,
+            supply_level  AS supply_bracket,
+            modified
+        FROM StationItem
+        ORDER BY station_id, item_id
+    """)
+
+    try:
+        with sa_session() as s:
+            with s.begin():
+                s.execute(UPDATE_CLEAR_LIVE)
+            result = s.execute(SELECT_ALL.execution_options(stream_results=True))
+            with open(str(listings_tmp), "w") as f:
+                f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
+                lineNo = 1
+                for row in result:
+                    if not go:
+                        break
+                    station_id, commodity_id = str(row[0]), str(row[1])
+                    sell_price, demand, demand_bracket = str(row[2]), str(row[3]), str(row[4])
+                    buy_price, supply, supply_bracket = str(row[5]), str(row[6]), str(row[7])
+                    ts = str(row[8]).split('.')[0]
+                    collected_at = str(timegm(datetime.strptime(ts, '%Y-%m-%d %H:%M:%S').timetuple()))
+                    listing = (f'{station_id},{commodity_id},{supply},{supply_bracket},{buy_price},{sell_price},'
+                               f'{demand},{demand_bracket},{collected_at}')
+                    f.write(f'{lineNo},{listing}\n'); lineNo += 1
+    except Exception as e:
+        print("Aborting export:"); print(e)
+        dump_busy = False
+        return
+
     if config['verbose']:
         print('Listings exporter finished with database, releasing lock.')
     dump_busy = False
-    
-    # If we aborted the export because we lost go, listings_tmp is broken and useless, so delete it.
+
     if not go:
-        listings_tmp.unlink()
+        listings_tmp.unlink(missing_ok=True)
         print("Export aborted, received shutdown signal.")
     else:
         while listings_file.exists():
@@ -1177,6 +1129,7 @@ def export_dump():
                 time.sleep(1)
         listings_tmp.rename(listings_file)
         print(f'Export completed in {datetime.now() - start}')
+
 
 def update_dicts():
     # We'll use this to get the fdev_id from the 'symbol', AKA commodity['name'].lower()
@@ -1252,87 +1205,299 @@ dump_busy = False
 go = True
 q = deque()
 
-dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve()
+import argparse
 
-config = load_config()
-if config['client_options'] == 'clean' or not Path(dataPath, 'TradeDangerous.db').exists():
-    print("Initial run")
-    trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', 'clean,solo'))
-    config['client_options'] = 'all'
-    with open("tradedangerous-listener-config.json", "w") as config_file:
-        json.dump(config, config_file, indent=4)
+def bootstrap_runtime():
+    """
+    Recreate the legacy top-level initialization but *without* starting threads.
+    Returns the thread objects. Safe to call only in normal threaded runs.
+    """
+    global dataPath, config, tdb, eddbPath, db_name, item_ids, system_ids, station_ids
 
-if config['verbose']:
-    print("Loading TradeDB")
-tdb = tradedb.TradeDB(load = False)
+    # Paths & config
+    dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve()
+    config = load_config()
 
-eddbPath = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv()).dataPath
+    summary = ensure_fresh_db(
+        backend=_ENGINE.dialect.name,
+        engine=_ENGINE,
+        data_dir=dataPath,    # or _DATA_DIR if you’ve resolved it separately
+        metadata=None,
+        rebuild=False,
+    )
 
-validate_config()
-if config['verbose']:
-    print("Config loaded")
-# Make sure the export folder exists
-try:
-    Path(config['export_path']).mkdir()
-except FileExistsError:
-    pass
-
-if config['verbose']:
-    print("Initializing threads")
-# get and process trade data messages from EDDN
-listener_thread = threading.Thread(target = get_messages)
-process_thread = threading.Thread(target = process_messages)
-
-if config['side'] == 'client':
-    # (client) check if server has updated
-    update_thread = threading.Thread(target = check_server)
-else:
-    # (server) check for update to source data and process it
-    update_thread = threading.Thread(target = check_update)
-
-# (server) export market data updated since last source update
-live_thread = threading.Thread(target = export_live)
-
-if config['verbose']:
-    print("Updating dicts")
-global db_name, item_ids, system_ids, station_ids
-try:
-    db_name, item_ids, system_ids, station_ids = update_dicts()
-except Exception as e:
-    print(str(e))
-    pass
-
-if config['verbose']:
-    print("Startup process completed.")
-
-print("Press CTRL-C at any time to quit gracefully.")
-try:
-    if config['verbose']:
-        print("Starting update thread")
-    update_thread.start()
-    # Give the update checker enough time to see if an
-    # update is needed before starting the other threads
-    time.sleep(5)
+    if config.get("debug"):
+        print(
+            f"DB bootstrap: action={summary['action']} "
+            f"sane={summary['sane']} "
+            f"reason={summary.get('reason','ok')} "
+            f"backend={summary['backend']}"
+        )
     
+    needs_bootstrap = (
+        config['client_options'] == 'clean'
+        or ensure_fresh_db(
+            backend=_BACKEND,
+            engine=_ENGINE,
+            data_dir=_DATA_DIR,
+            metadata=None,          # ORM metadata not required for the check
+            rebuild=False           # <-- never rebuild here; just report
+        ).get("action") == "needs_rebuild"
+    )
+
+    if needs_bootstrap:
+        print("Initial run")
+        trade.main(('trade.py', 'import', '-P', 'eddblink', '-O', 'clean,solo'))
+        config['client_options'] = 'all'
+        with open("tradedangerous-listener-config.json", "w") as config_file:
+            json.dump(config, config_file, indent=4)
+
     if config['verbose']:
-        print("Starting listener thread")
-    listener_thread.start()
-    
+        print("Loading TradeDB")
+    tdb = tradedb.TradeDB(load = False)
+
+    # eddblink data path (for client mode)
+    eddb_inst = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv())
+    globals()['eddbPath'] = eddb_inst.dataPath
+
+    validate_config()
     if config['verbose']:
-        print("Starting processor thread")
-    process_thread.start()
-    
-    if config['side'] == 'server':
-        time.sleep(1)
-        if config['verbose']:
-            print("Starting live exporter thread")
-        live_thread.start()
+        print("Config loaded")
+
+    # Ensure export folder exists
+    try:
+        Path(config['export_path']).mkdir()
+    except FileExistsError:
+        pass
+
+    if config['verbose']:
+        print("Initializing threads")
+
+    # Thread targets: use the SA variants we refactored
+    listener_thread = threading.Thread(target=get_messages)
+    process_thread  = threading.Thread(target=process_messages_sa)
+
+    if config['side'] == 'client':
+        update_thread = threading.Thread(target=check_server)
     else:
-        live_ack = True
-    
-    while True:
-        time.sleep(1)
-except KeyboardInterrupt:
-    print("CTRL-C detected, stopping.")
-    print("Please wait for all processes to report they are finished, in case they are currently active.")
-    go = False
+        update_thread = threading.Thread(target=check_update)
+
+    live_thread = threading.Thread(target=export_live_sa)
+
+    if config['verbose']:
+        print("Updating dicts")
+    try:
+        db_name, item_ids, system_ids, station_ids = update_dicts()
+    except Exception as e:
+        print(str(e))
+
+    if config['verbose']:
+        print("Startup process completed.")
+
+    return update_thread, listener_thread, process_thread, live_thread
+
+
+def print_stationitem_stats():
+    TOTAL = text("SELECT COUNT(*) FROM StationItem")
+    LIVE  = text("SELECT COUNT(*) FROM StationItem WHERE from_live = 1")
+    LATEST = text("SELECT MAX(modified) FROM StationItem")
+    with sa_session() as s:
+        total = s.execute(TOTAL).scalar_one()
+        live  = s.execute(LIVE).scalar_one()
+        latest = s.execute(LATEST).scalar_one()
+    print(f"[stats] StationItem total={total} live={live} latest_modified={latest}")
+
+
+def export_live_once_sa():
+    listings_file = (Path(config['export_path']).resolve() / Path("listings-live.csv"))
+    listings_tmp = listings_file.with_suffix(".tmp")
+    # listings-live.csv
+    SELECT_LIVE = text("""
+        SELECT
+            station_id,
+            item_id,
+            demand_price  AS sell_price,
+            demand_units  AS demand,
+            demand_level  AS demand_bracket,
+            supply_price  AS buy_price,
+            supply_units  AS supply,
+            supply_level  AS supply_bracket,
+            modified
+        FROM StationItem
+        WHERE from_live = 1
+        ORDER BY station_id, item_id
+    """)
+    start = datetime.now()
+    with sa_session() as s:
+        result = s.execute(SELECT_LIVE.execution_options(stream_results=True))
+        with open(str(listings_tmp), "w") as f:
+            f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
+            lineNo = 1
+            for row in result:
+                station_id, commodity_id = str(row[0]), str(row[1])
+                sell_price, demand, demand_bracket = str(row[2]), str(row[3]), str(row[4])
+                buy_price, supply, supply_bracket = str(row[5]), str(row[6]), str(row[7])
+                ts_val = row[8]
+                ts_str = ts_val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts_val, "strftime") else str(ts_val).split(".")[0]
+                collected_at = str(timegm(datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").timetuple()))
+                listing = (f"{station_id},{commodity_id},{supply},{supply_bracket},{buy_price},{sell_price},"
+                           f"{demand},{demand_bracket},{collected_at}")
+                f.write(f"{lineNo},{listing}\n"); lineNo += 1
+    while listings_file.exists():
+        try:
+            listings_file.unlink()
+        except:
+            time.sleep(0.5)
+    listings_tmp.rename(listings_file)
+    print(f"[export-live-now] wrote {listings_file} in {datetime.now() - start}")
+
+
+def export_dump_once_sa():
+    UPDATE_CLEAR_LIVE = text("UPDATE StationItem SET from_live = 0")
+    # listings.csv (full dump)
+    SELECT_ALL = text("""
+        SELECT
+            station_id,
+            item_id,
+            demand_price  AS sell_price,
+            demand_units  AS demand,
+            demand_level  AS demand_bracket,
+            supply_price  AS buy_price,
+            supply_units  AS supply,
+            supply_level  AS supply_bracket,
+            modified
+        FROM StationItem
+        ORDER BY station_id, item_id
+    """)
+    listings_file = (Path(config['export_path']).resolve() / Path("listings.csv"))
+    listings_tmp  = listings_file.with_suffix(".tmp")
+    start = datetime.now()
+    with sa_session() as s:
+        with s.begin():
+            s.execute(UPDATE_CLEAR_LIVE)
+        result = s.execute(SELECT_ALL.execution_options(stream_results=True))
+        with open(str(listings_tmp), "w") as f:
+            f.write("id,station_id,commodity_id,supply,supply_bracket,buy_price,sell_price,demand,demand_bracket,collected_at\n")
+            lineNo = 1
+            for row in result:
+                station_id, commodity_id = str(row[0]), str(row[1])
+                sell_price, demand, demand_bracket = str(row[2]), str(row[3]), str(row[4])
+                buy_price, supply, supply_bracket = str(row[5]), str(row[6]), str(row[7])
+                ts_val = row[8]
+                ts_str = ts_val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts_val, "strftime") else str(ts_val).split(".")[0]
+                collected_at = str(timegm(datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").timetuple()))
+                listing = (f"{station_id},{commodity_id},{supply},{supply_bracket},{buy_price},{sell_price},"
+                           f"{demand},{demand_bracket},{collected_at}")
+                f.write(f"{lineNo},{listing}\n"); lineNo += 1
+    while listings_file.exists():
+        try:
+            listings_file.unlink()
+        except:
+            time.sleep(0.5)
+    listings_tmp.rename(listings_file)
+    print(f"[export-dump-now] wrote {listings_file} in {datetime.now() - start}")
+
+def purge_old_stationitems_sa(days: int = 30, batch_size: int = 200_000):
+    """
+    Delete StationItem rows older than `days`, in batches.
+    NOTE: Purge only. No analyze/optimize/vacuum here.
+    """
+    if not isinstance(days, int) or days <= 0:
+        return {"deleted": 0, "cutoff": None, "skipped": True}
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    total = 0
+
+    with sa_session() as s:
+        DELETE_BATCH = text("""
+            DELETE FROM StationItem
+            WHERE modified < :cutoff
+            LIMIT :lim
+        """)
+        while True:
+            res = s.execute(DELETE_BATCH, {"cutoff": cutoff, "lim": batch_size})
+            s.commit()
+            deleted = getattr(res, "rowcount", 0)
+            if not deleted:
+                break
+            total += deleted
+            print(f"[purge] deleted {deleted:,} (total {total:,}) …")
+
+    print(f"[purge] completed: deleted {total:,} rows older than {cutoff} (>{days}d).")
+    return {"deleted": total, "cutoff": cutoff.isoformat(), "skipped": False}
+
+
+
+def parse_args():
+    p = argparse.ArgumentParser(prog="tradedangerous_listener")
+    p.add_argument("--no-update", action="store_true",
+                   help="Skip the update thread (no Spansh/client imports).")
+    p.add_argument("--export-live-now", action="store_true",
+                   help="Run a single listings-live.csv export and exit.")
+    p.add_argument("--export-dump-now", action="store_true",
+                   help="Run a single full listings.csv export and exit.")
+    p.add_argument("--stats", action="store_true",
+                   help="Print StationItem counts (before any one-shot export).")
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    # One-shot modes (no heavy bootstrap, no threads)
+    if args.stats or args.export_live_now or args.export_dump_now:
+        # need config for export_path; load minimal config here
+        global config
+        if 'config' not in globals() or not isinstance(config, dict):
+            config = load_config()
+        if args.stats:
+            print_stationitem_stats()
+        if args.export_live_now:
+            export_live_once_sa()
+        if args.export_dump_now:
+            export_dump_once_sa()
+        return
+
+    # Normal threaded run: bootstrap then start threads
+    update_thread, listener_thread, process_thread, live_thread = bootstrap_runtime()
+
+    print("Press CTRL-C at any time to quit gracefully.")
+    try:
+        if config['verbose']:
+            if args.no_update:
+                print("Skipping update thread (--no-update)")
+            else:
+                print("Starting update thread")
+        if not args.no_update:
+            update_thread.start()
+            time.sleep(5)
+
+        if config['verbose']:
+            print("Starting listener thread")
+        listener_thread.start()
+
+        if config['verbose']:
+            print("Starting processor thread")
+        process_thread.start()
+
+        if config['side'] == 'server':
+            time.sleep(1)
+            if config['verbose']:
+                print("Starting live exporter thread")
+            live_thread.start()
+        else:
+            global live_ack
+            live_ack = True
+
+        while True:
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        print("CTRL-C detected, stopping.")
+        print("Please wait for all processes to report they are finished, in case they are currently active.")
+        global go
+        go = False
+
+
+if __name__ == "__main__":
+    main()
