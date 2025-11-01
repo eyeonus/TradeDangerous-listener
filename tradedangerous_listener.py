@@ -424,7 +424,15 @@ def check_update():
                         print(f'Download complete, saved to local file: "{update_file}"')
                         os.utime(update_file, (last_modified, last_modified))
                 
-                maxage = ((datetime.now() - datetime.fromtimestamp(config.get("last_update", 0))) + timedelta(hours = 1))/timedelta(1)
+                last_update_ts = config.get("last_update", 0)
+                if last_update_ts <= 0:
+                    # First run or invalid timestamp: hard cap to 30 days
+                    maxage = 30
+                else:
+                    # Days since last update + 36-hour cushion, capped at 30 days
+                    days_since = (datetime.now() - datetime.fromtimestamp(last_update_ts)) / timedelta(days=1)
+                    maxage = min(days_since + 1.5, 30)
+
                 options = '-'
                 if config['debug']:
                     options += 'w'
