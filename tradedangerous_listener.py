@@ -961,11 +961,12 @@ def ensure_db_maint_cnf_ready(cfg: dict) -> None:
     m = dbp["mariadb"]
     host = (m.get("host") or "").strip()
     port = (m.get("port") or "").strip()
+    socket = (m.get("socket") or "").strip()
     user = (m.get("user") or "").strip()
     password = (m.get("password") or "").strip()
     name = (m.get("name") or "").strip()
-    if not (host and port and user and password and name):
-        _fail("TD_DB_CONFIG missing required [mariadb] keys (need host,port,user,password,name)")
+    if not (user and password and name and (socket or (host and port))):
+        _fail("TD_DB_CONFIG missing required [mariadb] keys (need user,password,name and either socket or host+port)")
     
     if shutil.which("mariadb-check") is None:
         _fail("mariadb-check not found in PATH (required for db maintenance)")
@@ -983,13 +984,19 @@ def ensure_db_maint_cnf_ready(cfg: dict) -> None:
         if not ok or not cp.has_section("client"):
             return False
         sec = cp["client"]
-        for k in ("host", "port", "user", "password"):
-            if not (sec.get(k) or "").strip():
-                return False
-        try:
-            int((sec.get("port") or "").strip())
-        except Exception:
+        
+        sock = (sec.get("socket") or "").strip()
+        h = (sec.get("host") or "").strip()
+        p = (sec.get("port") or "").strip()
+        u = (sec.get("user") or "").strip()
+        pw = (sec.get("password") or "").strip()
+        if not (u and pw and (sock or (h and p))):
             return False
+        if p:
+            try:
+                int(p)
+            except Exception:
+                return False
         return True
     
     def _write_cnf() -> None:
@@ -999,8 +1006,11 @@ def ensure_db_maint_cnf_ready(cfg: dict) -> None:
             pass
         with open(target, "w", encoding="utf-8") as fh:
             fh.write("[client]\n")
-            fh.write(f"host={host}\n")
-            fh.write(f"port={port}\n")
+            if socket:
+                fh.write(f"socket={socket}\n")
+            else:
+                fh.write(f"host={host}\n")
+                fh.write(f"port={port}\n")
             fh.write(f"user={user}\n")
             fh.write(f"password={password}\n")
         try:
