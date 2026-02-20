@@ -1,104 +1,406 @@
-# TradeDangerous-listener
-A listener for TradeDangerous, designed to work in conjunction with Trade Dangerous (https://github.com/eyeonus/Trade-Dangerous).
+# TradeDangerous Listener
+A multiprocessing listener/supervisor for TradeDangerous, designed to ingest live EDDN market data, periodically import Spansh dumps, and publish export CSVs for downstream clients.
 
-Python version 3.10+ required.
+Unless you are running a Trade:Dangerous SERVER you almost certainly want tradedangerous_listener_client.py and not this.
+
+Python 3.10+ required. MariaDB backend ONLY.
+
+---
 
 # Notes
-- This program requires TD to be installed on the same machine as this in order to work.
 
-- This program will automatically run the spansh import plugin, so there's no /need/ for you to ever do it yourself.
+- This program requires TradeDangerous to be installed and importable (either via pip or from a TD checkout).
+- The listener is now a **supervisor with multiple worker processes**, not a simple threaded script.
+- The Spansh import is run automatically (unless disabled via CLI).
+- Exports (`listings-live.csv` and `listings.csv`) are handled internally.
+- EDDN uses 0MQ — you must install `pyzmq`.
 
-- If TD was not installed via pip, this program must be in the same folder as TD's "trade.py". IF TD was installed via pip, this file can be anywhere desired.
+Example:
 
-- EDDN is a 0MQ network, so this program uses the 'zmq' module. You may need to install zmq before this will run by running 'pip install pyzmq' in a Command Prompt / Terminal.
+```bash
+pip install pyzmq
+```
+
+---
 
 # Features
-- Listens to the Elite Dangerous Data Network (EDDN) for market updates from whitelisted sources and updates TD's database. The whitelist can be configured, default allowed clients are E:D Market Connector, EDDiscovery, and EDDI (These three (especially EDMC)  account for ~97% of all messages on the EDDN).
 
-- Automatically checks for updates from [spansh](https://spansh.co.uk/dumps) (server-side) and runs the spansh plugin when it detects one. Delay between checks is 1 hour by default, can be changed in the configuration file, under the setting "check_update_every_x_sec". **See the README.md for EDDBlink plugin for more information on available run options.**
+## 1) Live EDDN ingestion
 
-- If configured as server, will automatically export the currently stored prices listings from TD's database in the file "listings-live.csv", which will be located in the folder named in the "export_path" setting, which defaults to "\<TD install\>/data/eddb". The duration between subsequent exports is 5 minutes by default, and can be configured in the configuration file, under the setting "export_every_x_sec".
+- Connects to `tcp://eddn.edcd.io:9500`
+- Subscribes to `commodity/3` schema
+- Filters messages by configurable whitelist
+- Coalesces updates per station (latest wins)
+- Writes snapshots into `StationItem`
+- Sets `from_live = 1` for all live updates
+- Uses per-station advisory locks (MariaDB) to avoid deadlocks
+- Never drops updates purely due to temporary lock contention (retries with backoff)
+
+---
+
+## 2) Spansh update process (separate process)
+
+Runs automatically on startup, then every `check_update_every_x_hour` hours (default 24).
+
+Process:
+
+- HEAD request to `https://downloads.spansh.co.uk/galaxy_stations.json`
+- Download if remote is newer
+- Run `trade import -P spansh` in listener-safe mode
+- Signal processor to refresh in-memory dict caches
+- Publish full dump `listings.csv`
+- Demote older `from_live=1` rows to baseline (`from_live=0`)
+
+Disable entirely with:
+
+```bash
+python tradedangerous_listener.py --no-update
+```
+
+---
+
+## 3) Live export process
+
+Runs every `export_live_every_x_min` minutes (default 5).
+
+- Exports `StationItem WHERE from_live=1`
+- Writes `listings-live.csv`
+- Uses atomic write (tmp + rename)
+- Read-only DB access (does not pause processor)
+
+---
+
+## 4) Optional maintenance windows
+
+The supervisor can perform scheduled:
+
+- Purge of old `StationItem` rows
+- MariaDB optimise/analyse operations
+
+During maintenance:
+
+- All worker processes are stopped
+- Maintenance runs
+- Workers restart cleanly
+
+SQLite users should leave DB maintenance disabled.
+
+---
 
 # Running
-Running the program is simple: open a Command Prompt (Windows) / Terminal (Linux/OSX), go to the folder this program is located at, and type 'python eddblink_listener.py". You'll know you did it right when you see "Press CTRL-C at any time to quit gracefully." Once you see that, you can simply minimize the window and let it do its thing.
 
-To close the program in a way that will definitely not muck up the database, press CTRL-C. This will send a "keyboard interrupt", also known as SIGINT, to the program, letting it know you want it to stop, and it will shut down all its processes cleanly.
-(If you're on a Mac and CTRL-C doesn't work, try '⌘-.' (Command-period).)
+Basic:
 
-Closing the program any other way, such as closing the terminal window, can potentially lead to a corrupt database.
+```bash
+python tradedangerous_listener.py
+```
 
-# Configuration file
-The configuration file is automatically created with default settings on first run. If you wish to, you may make changes to the configuration, doing so will require stopping and restarting the program before the changes take effect.
+Safe shutdown:
 
-To run this for yourself, nothing needs to be done to the configuration file.
+- Press **CTRL-C**
+- Supervisor signals all workers
+- Processes are joined cleanly
+- Forced terminate/kill only if required
 
-To run as a server, change the "side" setting from "client" to "server".
+Do not kill the process abruptly unless necessary.
 
-The configuration file, by default, looks like the following:
+---
+
+# Command Line Options
+
+## Long-running mode
+
+- `--no-update`
+  Disable Spansh update process.
+
+## One-shot utility modes (no worker processes started)
+
+- `--stats`
+  Print StationItem statistics (total rows, live rows, newest timestamp).
+
+- `--export-live-now`
+  Export a single `listings-live.csv` and exit.
+
+- `--export-dump-now`
+  Export a single `listings.csv` and exit.
+
+---
+
+# Configuration File
+
+Default name:
 
 ```
+tradedangerous-listener-config.json
+```
+
+Override location:
+
+```
+TD_LISTENER_CONFIG=/path/to/config.json
+```
+
+If missing, a default config is written on first run.
+
+If invalid JSON is detected:
+- The file is backed up to `*.broken.<timestamp>`
+- A fresh default is written
+- The program exits
+
+Config updates (timestamps etc.) are written atomically with a lock file.
+
+---
+
+## Default Configuration
+
+```json
 {
-    "side": "client",
     "verbose": true,
-    "plugin_options": "all,skipvend,force",
-    "check_delay_in_sec": 3600,
-    "export_every_x_sec": 300,
-    "export_path": "./data/eddb",
+    "debug": false,
+    "last_update": 0,
+    "last_purge": 0,
+    "last_db_maint": 0,
+    "check_update_every_x_hour": 24,
+    "spansh_log_interval": 30,
+    "export_live_every_x_min": 5,
+    "export_path": "./tmp",
+    "purge_every_x_hour": 24,
+    "purge_retention_days": 30,
+    "db_maint_every_x_days": 30,
+    "db_maint_cnf": "mariadb_check.cnf",
+    "eddn_url": null,
+    "eddn_schema_ref": null,
     "whitelist": [
         {
-            "software": "E:D Market Connector [Windows]"
+            "software": "E:D Market Connector [Windows]",
+            "minversion": "6.0.0"
         },
         {
-            "software": "E:D Market Connector [Mac OS]"
+            "software": "E:D Market Connector [Mac OS]",
+            "minversion": "6.0.0"
         },
         {
-            "software": "E:D Market Connector [Linux]"
+            "software": "E:D Market Connector [Linux]",
+            "minversion": "6.0.0"
         },
         {
             "software": "EDDiscovery"
         },
         {
-            "software": "eddi",
-            "minversion": "2.2"
+            "software": "EDDLite"
         }
     ]
 }
 ```
-A note on the whitelist:
-- Software entries /without/ a minversion mean messages from any version of that program will be accepted.
-- Software entries /with/ a minversion mean messages from a version lower than minversion will not be accepted, but those >= minversion will.
 
-If you wish, you may copy this as "tradedangerous-listener-config.json" in the same folder as the program itself and make any changes to it before running the program, in order to avoid having to run it, waiting for the default config file to be created, stopping it, making the changes, and then running the program again.
+---
 
-# How it works
+## Configuration Notes
 
-The TradeDangerous-listener program runs either three or four separate threads:
-1) The actual listener, which is started as soon as the startup process is complete.
-This is the thread that listens for messages and adds them to the queue.
+### verbose / debug
+Control console logging.
+- `debug` enables extra rejection diagnostics.
 
-2) The update checker, which is started right after the listener.
-This is the method that runs the spansh plugin when it detects an update to the spansh dump has occurred.
-Before it starts the updates, it signals that it needs the DB: "Spansh update available, waiting for busy signal acknowledgement before proceeding.".
-It then waits for the listings exporter and message processor to signal they got the signal and are waiting for the update checker to complete, and then runs the update.
-When it's finished, it signals completion to the exporter and processor, and they both unpause.
+### whitelist
+Filters EDDN messages by `header.softwareName`.
 
-A note on the updating:
-The spansh plugin only downloads the dump and parses it into a .prices file, the update method then locks the DB and performs the update. The DB is not locked until the update is ready, so normal operation continues while the spansh plugin does its thing.
+- Case-insensitive match.
+- If `minversion` exists, versions below it are rejected.
+- Version comparison uses `packaging.version`.
 
-3) The listings exporter, which is started 5 seconds after the update checker in order to give the checker enough time to check if it needs to update immediately.
-This is not run when the listener is running as a client. In that case, it "permanently" (i.e. as long as the program is running) turns on the busy signal acknowledgement and shuts itself down.
-When it's not currently active and gets a busy signal from the update checker, it acknowledges it, "Listings exporter acknowledging busy signal.", and pauses itself until it gets the no-longer-busy signal, "Busy signal off, listings exporter resuming."
-When it begins exporting the listings, it sends a signal to the message processor that it needs the DB, "Listings exporter sending busy signal."
-It doesn't need to send one to the update checker, because the update checker will wait for acknowledgement from the exporter, and the exporter won't give that until it's done exporting.
-Once it gets acknowledgement from the message processor, it grabs all the listings that have been updated since the last dump, i.e., all the listings that have a "from_live" value of 1.
-Once it's gotten them, it relinquishes the DB and turns off its busy signal, allowing the message processor to resume.
-It then exports all the listings it got to the live listings file.
+### check_update_every_x_hour
+Interval between Spansh checks (runs once immediately on startup).
 
-4) The message processor, which is started 5 seconds after the update checker, immediately after the listings exporter.
-This is the method that actually puts the messages from the EDDN into the database.
-If it receives a busy signal from either the update checker or the listings exporter, it pauses, "Message processor acknowledging busy signal."
-When the busy signal(s) are turned off, it resumes from where it left off, "Busy signal off, message processor resuming."
-When it is active, it pulls the first message from the queue being built up by the listener, does some processing, and inserts it into the DB, setting the "from_live" flag for each entry it inserts to 1.
-If there are still messages in the queue, it immediately proceeds to process the next message.
-If there are no messages in the queue remaining, it tells the DB to commit the changes it has made.
+### spansh_log_interval
+Controls progress logging during spansh import.
 
+### export_live_every_x_min
+Interval for live CSV export.
+
+### export_path
+Directory for:
+- `listings-live.csv`
+- `listings.csv`
+- Optional diagnostics JSONL
+
+### purge settings
+- `purge_every_x_hour`
+- `purge_retention_days`
+
+Deletes StationItem rows older than retention window.
+
+Set `purge_every_x_hour = 0` to disable.
+
+### DB maintenance settings
+- `db_maint_every_x_days`
+- `db_maint_cnf`
+
+Runs:
+```
+mariadb-check --optimize
+mariadb-check --analyze
+```
+
+Requires:
+- `TD_DB_CONFIG`
+- `mariadb-check`
+- mysql/mariadb client in PATH
+
+Set `db_maint_every_x_days = 0` to disable.
+
+---
+
+# Optional / Advanced Config Keys
+
+These are not in defaults but are supported if manually added.
+
+## Diagnostics
+
+- `listener_diag`
+- `diagnostics`
+- `listener_diag_stats_every`
+- `listener_diag_path`
+
+Enables JSONL diagnostic logging.
+
+---
+
+## DB retry tuning
+
+- `listener_db_max_retries`
+- `listener_db_backoff_min`
+- `listener_db_backoff_cap`
+- `listener_station_lock_backoff_min`
+- `listener_station_lock_backoff_cap`
+
+Tune retry/backoff behaviour for advisory locking.
+
+---
+
+## Throughput tuning
+
+- `listener_coalesce_drain_cap`
+- `listener_processor_rate_every`
+
+Control batch size and rate logging interval.
+
+---
+
+# Environment Variables
+
+## Listener-specific
+
+- `TD_LISTENER_CONFIG`
+  Override config path.
+
+- `TD_CSV`
+  Override TD CSV directory.
+
+- `TDL_LISTENER_LOCK_TIMEOUT_SECONDS`
+- `TDL_LISTENER_LOCK_MAX_RETRIES`
+- `TDL_LISTENER_LOCK_BACKOFF_START_SECONDS`
+
+Tune advisory lock behaviour.
+
+---
+
+## Test / Developer switches
+
+- `TDL_REFRESH_QUICK_TEST=1`
+  Skip Spansh and only trigger dict refresh event.
+
+- `TDL_REFRESH_QUICK_TEST_DELAY_SECONDS`
+  Delay for quick test mode.
+
+- `TDL_TEST_FORCE_DEFER_EVERY_N`
+  Artificially defer every Nth station update.
+
+Not for production use.
+
+---
+
+## TradeDangerous DB layer
+
+- `TD_DB_CONFIG`
+  Path to TD DB configuration INI.
+
+- `TD_DATA`
+  Override TD data directory.
+
+- `TD_TMP`
+  Override TD tmp directory.
+
+---
+
+# How it works (current architecture)
+
+The program runs as a supervisor and spawns four processes:
+
+## 1) Listener process
+- Receives EDDN ZMQ messages
+- Decompresses payload
+- Filters by schema + whitelist
+- Dedupes per station within batch window
+- Pushes newest per station into queue
+
+## 2) Processor process
+- Drains queue into per-station coalescer
+- Acquires per-station advisory lock
+- Deletes existing StationItem rows for station
+- Inserts full snapshot
+- Sets `from_live = 1`
+- Commits in batches
+
+If a station lock is busy:
+- Update is deferred
+- Retried with exponential backoff
+- Not dropped
+
+After Spansh import:
+- Refreshes in-memory mapping dicts
+
+---
+
+## 3) Spansh update process
+- Periodically checks remote dump
+- Downloads if newer
+- Runs TD spansh plugin
+- Signals dict refresh
+- Publishes `listings.csv`
+- Re-baselines older live rows
+
+---
+
+## 4) Live exporter process
+- Every N minutes:
+  - Select `from_live = 1`
+  - Write `listings-live.csv`
+  - Atomic rename
+
+---
+
+# Meaning of from_live
+
+`from_live = 1` means:
+> Updated since the last published full dump.
+
+After a Spansh import completes and `listings.csv` is published:
+- Older `from_live=1` rows are demoted to `0`.
+
+Therefore:
+
+- `listings.csv` = full snapshot
+- `listings-live.csv` = delta since last dump
+
+---
+
+# What changed from the original listener
+
+- No more `side = client/server` mode.
+- No global “busy pause everything” signalling.
+- True multiprocessing with separate processes.
+- Per-station advisory locking instead of whole-DB blocking.
+- Coalescing queue instead of raw FIFO writes.
+- Atomic config updates.
+- Scheduled purge and DB maintenance support.
+- Explicit full-dump publishing after Spansh.
