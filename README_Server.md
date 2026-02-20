@@ -212,7 +212,7 @@ Filters EDDN messages by `header.softwareName`.
 Interval between Spansh checks (runs once immediately on startup).
 
 ### spansh_log_interval
-Controls progress logging during spansh import.
+How many seconds between spansh log entries.
 
 ### export_live_every_x_min
 Interval for live CSV export.
@@ -253,6 +253,7 @@ Set `db_maint_every_x_days = 0` to disable.
 # Optional / Advanced Config Keys
 
 These are not in defaults but are supported if manually added.
+Normally none of these are needed, but proved useful in testing, so have been retained in case something goes horribly wrong.
 
 ## Diagnostics
 
@@ -294,7 +295,7 @@ Control batch size and rate logging interval.
   Override config path.
 
 - `TD_CSV`
-  Override TD CSV directory.
+  Override TD CSV directory. Useful to output client files into a publically available location.
 
 - `TDL_LISTENER_LOCK_TIMEOUT_SECONDS`
 - `TDL_LISTENER_LOCK_MAX_RETRIES`
