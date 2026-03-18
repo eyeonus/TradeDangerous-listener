@@ -87,6 +87,29 @@ SQLite users should leave DB maintenance disabled.
 
 ---
 
+## 5) Optional supervisor PID file
+
+If configured, the long-running supervisor writes its own PID to a file on startup.
+
+Typical use:
+
+- save parent PID to something like `~/.local/run/listener.pid`
+- use that PID later when you want to stop the supervisor cleanly
+
+Behaviour:
+
+- only the **main long-running supervisor** writes the PID file
+- one-shot modes (`--stats`, `--export-live-now`, `--export-dump-now`) do **not** write it
+- on clean shutdown, the PID file is removed if it still matches the current supervisor PID
+
+This is an advanced-user setting:
+
+- the parent directory must already exist
+- no directories are created for you
+- if you configure a bad path or an unwritable location, startup will fail
+
+---
+
 # Running
 
 Basic:
@@ -101,6 +124,8 @@ Safe shutdown:
 - Supervisor signals all workers
 - Processes are joined cleanly
 - Forced terminate/kill only if required
+
+If `pid_file` is configured, you may also stop the supervisor by signalling the saved parent PID.
 
 Do not kill the process abruptly unless necessary.
 
@@ -164,6 +189,7 @@ Config updates (timestamps etc.) are written atomically with a lock file.
     "spansh_log_interval": 30,
     "export_live_every_x_min": 5,
     "export_path": "./tmp",
+    "pid_file": null,
     "purge_every_x_hour": 24,
     "purge_retention_days": 30,
     "db_maint_every_x_days": 30,
@@ -223,6 +249,22 @@ Directory for:
 - `listings.csv`
 - Optional diagnostics JSONL
 
+### pid_file
+Optional path for writing the supervisor PID file.
+
+Example:
+
+```json
+"pid_file": "/path/to/listener.pid"
+```
+
+Notes:
+
+- the file is written by the long-running supervisor only
+- one-shot modes do not write it
+- the parent directory must already exist
+- blank strings are treated as invalid and reset to default (`null`)
+
 ### purge settings
 - `purge_every_x_hour`
 - `purge_retention_days`
@@ -236,7 +278,7 @@ Set `purge_every_x_hour = 0` to disable.
 - `db_maint_cnf`
 
 Runs:
-```
+```bash
 mariadb-check --optimize
 mariadb-check --analyze
 ```
@@ -295,7 +337,7 @@ Control batch size and rate logging interval.
   Override config path.
 
 - `TD_CSV`
-  Override TD CSV directory. Useful to output client files into a publically available location.
+  Override TD CSV directory. Useful to output client files into a publicly available location.
 
 - `TDL_LISTENER_LOCK_TIMEOUT_SECONDS`
 - `TDL_LISTENER_LOCK_MAX_RETRIES`
@@ -404,4 +446,5 @@ Therefore:
 - Coalescing queue instead of raw FIFO writes.
 - Atomic config updates.
 - Scheduled purge and DB maintenance support.
+- Optional supervisor PID file support via config.
 - Explicit full-dump publishing after Spansh.
