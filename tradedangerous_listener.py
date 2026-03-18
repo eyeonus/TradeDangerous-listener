@@ -647,6 +647,7 @@ def default_config():
         ('spansh_log_interval', 30),
         ('export_live_every_x_min', 5),
         ('export_path', './tmp'),
+        ('pid_file', None),
         # Purge schedule (0 disables)
         ('purge_every_x_hour', 24),
         ('purge_retention_days', 30),
@@ -877,6 +878,10 @@ def validate_config():
     v = config.get("export_path")
     if not (isinstance(v, str) and v.strip()):
         _reset("export_path")
+    
+    v = config.get("pid_file")
+    if v is not None and not (isinstance(v, str) and v.strip()):
+        _reset("pid_file")
     
     v = config.get("purge_every_x_hour")
     if not (_is_int(v) and v >= 0):
@@ -2639,7 +2644,13 @@ def main():
         return
     
     # Normal threaded run: bootstrap then start threads
+    pid_path = None
     update_thread, listener_thread, process_thread, live_thread = bootstrap_runtime()
+    
+    pid_file = config.get("pid_file")
+    if isinstance(pid_file, str) and pid_file.strip():
+        pid_path = Path(pid_file).expanduser()
+        pid_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
     
     print("Press CTRL-C at any time to quit gracefully.")
     try:
@@ -2878,6 +2889,13 @@ def main():
                         proc.terminate()
                 except Exception:
                     pass
+        
+        if pid_path is not None:
+            try:
+                if pid_path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                    pid_path.unlink()
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     main()
