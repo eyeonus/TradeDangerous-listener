@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 
-from __future__ import generators
 import os
 import json
 import time
 import zlib
 import zmq
-import threading
 import multiprocessing
 import signal
 from datetime import datetime, timedelta
@@ -18,7 +16,7 @@ import subprocess
 # TD SQLAlchemy session bootstrap (MariaDB-first; SQLite OK)
 from contextlib import contextmanager
 from typing import Generator
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 # Make things easier for Tromador.
@@ -428,7 +426,7 @@ def run_listener(stop, queue, cfg):
     listener.get_batch(queue, stop_event=stop)
     print(f"[listener] PID {os.getpid()} exiting")
 
-def run_update(stop, cfg, flags=None, refresh_event=None):
+def run_update(stop, cfg, spansh_busy_event=None, refresh_event=None):
     """
     Batch update/import runner.
     
@@ -436,13 +434,12 @@ def run_update(stop, cfg, flags=None, refresh_event=None):
       1) Run Spansh import
       2) If (and only if) Spansh succeeds, export listings.csv
     
-    No busy/ack is used. Live ingestion/export continues concurrently.
     """
     global config, refresh_dicts_event, spansh_busy
     config = cfg
     refresh_dicts_event = refresh_event
-    if flags is not None:
-        spansh_busy = flags.get("spansh_busy", spansh_busy)
+    if spansh_busy_event is not None:
+        spansh_busy = spansh_busy_event
     
     if multiprocessing.current_process().name != "MainProcess":
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -1062,28 +1059,17 @@ def ensure_db_maint_cnf_ready(cfg: dict) -> None:
     
     print(f"[Maintenance] db_maint_cnf OK: {str(target)} (connect test ok)")
 
-def db_locked_message(source: str)  -> None:
-    print(f"[{source}] - DB locked, waiting for access.", end="\n")
-    time.sleep(1)
-
-def run_processor(stop, queue, cfg, flags=None, refresh_event=None):
+def run_processor(stop, queue, cfg, refresh_event=None):
     """
-    Runner for the message processor. Uses the legacy SA implementation.
+    Runner for the message processor. 
     """
     global q, config, stop_event, refresh_dicts_event
     global db_name, item_ids, system_ids, station_ids
-    global update_busy, dump_busy, live_busy, process_ack, live_ack
     global dataPath
     q = queue
     config = cfg
     refresh_dicts_event = refresh_event
     stop_event = stop
-    if flags is not None:
-        update_busy = flags.get("update_busy", update_busy)
-        dump_busy = flags.get("dump_busy", dump_busy)
-        live_busy = flags.get("live_busy", live_busy)
-        process_ack = flags.get("process_ack", process_ack)
-        live_ack = flags.get("live_ack", live_ack)
     if multiprocessing.current_process().name != "MainProcess":
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     init_db(cfg)
@@ -1113,11 +1099,10 @@ def process_messages_sa():
       - NEVER drop a live update just because the station lock is busy.
       - Coalesce pending updates by station_id: keep only the newest update per station.
       - On station-lock contention / deadlock / lock-timeout, defer and retry later with backoff.
-      - Continue to respect busy/ack + periodic maintenance behaviour from live listener.
+      - Respect shutdown and dictionary-refresh signals from the supervisor.
     """
     
-    global q, process_ack, update_busy, dump_busy, live_busy
-    global config, db_name, item_ids, system_ids, station_ids
+    global q, config, db_name, item_ids, system_ids, station_ids
     
     import heapq
     import random
@@ -1695,47 +1680,6 @@ def process_messages_sa():
                 "attempts_tracked": len(station_attempts),
             })
         
-        # Respect busy flags (threaded parity)
-        def _flag_is_set(flag) -> bool:
-            try:
-                return bool(flag.is_set())
-            except Exception:
-                return bool(flag)
-        
-        def _ack_is_set() -> bool:
-            return _flag_is_set(process_ack)
-        
-        def _ack_set(val: bool) -> None:
-            global process_ack
-            if hasattr(process_ack, "set") and hasattr(process_ack, "clear"):
-                if val:
-                    process_ack.set()
-                else:
-                    process_ack.clear()
-            else:
-                process_ack = bool(val)
-        
-        def _busy_is_set() -> bool:
-            return (
-                _flag_is_set(update_busy)
-                or _flag_is_set(dump_busy)
-            )
-        
-        if _busy_is_set():
-            if not _ack_is_set() and (config.get("verbose") or config.get("debug")):
-                print("Message processor acknowledging busy signal.")
-            _ack_set(True)
-            while _busy_is_set() and (stop is None or not stop.is_set()):
-                if stop is not None:
-                    stop.wait(1)
-                else:
-                    time.sleep(1)
-            if stop is not None and stop.is_set():
-                break
-            _ack_set(False)
-            if config.get("verbose") or config.get("debug"):
-                print("Busy signal off, message processor resuming.")
-        
         # Dict refresh signalling (post-Spansh)
         refresh = globals().get("refresh_dicts_event")
         if refresh is not None and refresh.is_set():
@@ -1772,8 +1716,6 @@ def process_messages_sa():
         # Pull new listener entries into the coalescer, then release due retries.
         _drain_queue_into_coalescer()
         _release_due_deferrals()
-        
-        # Rate-limited throughput/queue diagnostics (minimal; helps debug stalls)
         
         # Rate-limited throughput/queue diagnostics (minimal; helps debug stalls)
         if time.time() >= next_rate_at:
@@ -1951,7 +1893,7 @@ def process_messages_sa():
                             station_ids[f'{system}/{station}'] = int(station_id)
                 
                 if not discard:
-                    # Migrate old station_id mapping if needed (legacy parity)
+                    # Migrate old station_id mapping if needed 
                     old_sid = station_ids.get(f'{system}/{station}')
                     if old_sid and int(old_sid) != int(station_id):
                         res = s.execute(GET_OLD_STATION_INFO, {"sid": int(old_sid)}).first()
@@ -2146,7 +2088,7 @@ def process_messages_sa():
     
     print("Message processor (SA) reporting shutdown.")
 
-def run_live_exporter(stop, cfg, flags=None):
+def run_live_exporter(stop, cfg):
     """
     Emit listings-live.csv from StationItem WHERE from_live = 1.
     
@@ -2247,15 +2189,13 @@ def run_live_exporter(stop, cfg, flags=None):
         pass
     print("[Live] Exporter reporting shutdown.")
 
-def export_live_sa(stop, cfg, flags=None):
-    run_live_exporter(stop, cfg, flags)
+def export_live_sa(stop, cfg):
+    run_live_exporter(stop, cfg)
 
 def run_dump_exporter(stop, cfg):
     """
     Emit listings.csv from all StationItem rows.
     
-    Milestone 4: This exporter must NOT use busy/ack. Live ingestion/export
-    continues concurrently with Spansh + dump export.
     """
     listings_file = (Path(cfg['export_path']).resolve() / Path("listings.csv"))
     listings_tmp = listings_file.with_suffix(".tmp")
@@ -2326,37 +2266,37 @@ def run_dump_exporter(stop, cfg):
 def update_dicts():
     # We'll use this to get the fdev_id from the 'symbol', AKA commodity['name'].lower()
     db_name = dict()
-    edcd_source = 'https://raw.githubusercontent.com/EDCD/FDevIDs/master/commodity.csv'
-    edcd_csv = request.urlopen(edcd_source)
-    edcd_dict = csv.DictReader(codecs.iterdecode(edcd_csv, 'utf-8'))
-    for line in iter(edcd_dict):
-        db_name[line['symbol'].lower()] = line['id']
-    
-    # Rare items are in a different file.
-    edcd_rare_source = 'https://raw.githubusercontent.com/EDCD/FDevIDs/master/rare_commodity.csv'
-    edcd_rare_csv = request.urlopen(edcd_rare_source)
-    edcd_rare_dict = csv.DictReader(codecs.iterdecode(edcd_rare_csv, 'utf-8'))
-    for line in iter(edcd_rare_dict):
-        db_name[line['symbol'].lower()] = line['id']
+    edcd_sources = (
+        'https://raw.githubusercontent.com/EDCD/FDevIDs/master/commodity.csv',
+        'https://raw.githubusercontent.com/EDCD/FDevIDs/master/rare_commodity.csv',
+    )
+    for edcd_source in edcd_sources:
+        edcd_csv = request.urlopen(edcd_source)
+        edcd_dict = csv.DictReader(codecs.iterdecode(edcd_csv, 'utf-8'))
+        for line in edcd_dict:
+            symbol = (line.get('symbol') or '').lower()
+            item_id = line.get('id')
+            if symbol and item_id:
+                db_name[symbol] = item_id
     
     # We'll use this to get the item_id from the fdev_id because it's faster than a database lookup.
+    # Item.csv is authoritative for all items, including rares.
     item_ids = dict()
-    
-    # Rare items don't have an EDDB item_id, so we'll just store them by the fdev_id
-    for line in iter(edcd_rare_dict):
-        item_ids[line['id']] = line['id']
     
     with open(str(dataPath / Path("Item.csv")), "r", encoding = "utf8") as fh:
         items = csv.DictReader(fh, quotechar = "'")
+        fieldnames = items.fieldnames or []
         # Older versions of TD don't have fdev_id as a unique key, newer versions do.
-        if 'fdev_id' in next(iter(items)).keys():
+        if 'fdev_id' in fieldnames:
             iid_key = 'fdev_id'
         else:
             iid_key = 'unq:fdev_id'
-        fh.seek(0)
-        next(iter(items))
         for item in items:
-            item_ids[item[iid_key]] = int(item['unq:item_id'])
+            fdev_id = item.get(iid_key)
+            item_id = item.get('unq:item_id')
+            if not fdev_id or not item_id:
+                continue
+            item_ids[fdev_id] = int(item_id)
     
     # We're using these for the same reason.
     system_names = dict()
@@ -2387,11 +2327,6 @@ def update_dicts():
     
     return db_name, item_ids, system_ids, station_ids
 
-update_busy = False
-process_ack = False
-live_ack = False
-live_busy = False
-dump_busy = False
 spansh_busy = False
 
 refresh_dicts_event = None
@@ -2402,10 +2337,9 @@ import argparse
 
 def bootstrap_runtime():
     """
-    Recreate the legacy top-level initialization but *without* starting threads.
-    Returns the thread objects. Safe to call only in normal threaded runs.
+    Returns the process objects. Safe to call only in normal process runs.
     """
-    global dataPath, config, tdb, eddbPath, db_name, item_ids, system_ids, station_ids
+    global dataPath, config, tdb, db_name, item_ids, system_ids, station_ids
     
     # Paths & config
     dataPath = os.environ.get('TD_CSV') or Path(tradeenv.TradeEnv().csvDir).resolve()
@@ -2448,31 +2382,18 @@ def bootstrap_runtime():
         print("Initializing processes")
     
     global stop_event, q
-    global update_busy, dump_busy, spansh_busy, live_busy, process_ack, live_ack, refresh_dicts_event
+    global spansh_busy, refresh_dicts_event
     ctx = multiprocessing.get_context("spawn")
     stop_event = ctx.Event()
     q = ctx.Queue()
     
-    update_busy = ctx.Event()
-    dump_busy = ctx.Event()
     spansh_busy = ctx.Event()
-    live_busy = ctx.Event()
-    process_ack = ctx.Event()
-    live_ack = ctx.Event()
     refresh_dicts_event = ctx.Event()
-    flags = {
-        "update_busy": update_busy,
-        "dump_busy": dump_busy,
-        "spansh_busy": spansh_busy,
-        "live_busy": live_busy,
-        "process_ack": process_ack,
-        "live_ack": live_ack,
-    }
     
-    listener_thread = ctx.Process(target=run_listener, args=(stop_event, q, config))
-    process_thread  = ctx.Process(target=run_processor, args=(stop_event, q, config, flags, refresh_dicts_event))
-    update_thread = ctx.Process(target=run_update, args=(stop_event, config, flags, refresh_dicts_event))
-    live_thread = ctx.Process(target=run_live_exporter, args=(stop_event, config, flags))
+    listener_process = ctx.Process(target=run_listener, args=(stop_event, q, config))
+    processor_process = ctx.Process(target=run_processor, args=(stop_event, q, config, refresh_dicts_event))
+    update_process = ctx.Process(target=run_update, args=(stop_event, config, spansh_busy, refresh_dicts_event))
+    live_export_process = ctx.Process(target=run_live_exporter, args=(stop_event, config))
     
     if config['verbose']:
         print("Updating dicts")
@@ -2484,7 +2405,7 @@ def bootstrap_runtime():
     if config['verbose']:
         print("Startup process completed.")
     
-    return update_thread, listener_thread, process_thread, live_thread
+    return update_process, listener_process, processor_process, live_export_process
 
 def print_stationitem_stats():
     TOTAL = text("SELECT COUNT(*) FROM StationItem")
@@ -2628,7 +2549,7 @@ def parse_args():
 def main():
     args = parse_args()
     
-    # One-shot modes (no heavy bootstrap, no threads)
+    # One-shot modes (no heavy bootstrap, no child processes)
     if args.stats or args.export_live_now or args.export_dump_now:
         # need config for export_path; load minimal config here
         global config
@@ -2643,9 +2564,9 @@ def main():
             export_dump_once_sa()
         return
     
-    # Normal threaded run: bootstrap then start threads
+    # Normal process run: bootstrap then start child processes
     pid_path = None
-    update_thread, listener_thread, process_thread, live_thread = bootstrap_runtime()
+    update_process, listener_process, processor_process, live_export_process = bootstrap_runtime()
     
     pid_file = config.get("pid_file")
     if isinstance(pid_file, str) and pid_file.strip():
@@ -2660,20 +2581,20 @@ def main():
             else:
                 print("Starting update process")
         if not args.no_update:
-            update_thread.start()
+            update_process.start()
         
         if config['verbose']:
-            print("Starting listener thread")
-        listener_thread.start()
+            print("Starting listener process")
+        listener_process.start()
         
         if config['verbose']:
-            print("Starting processor thread")
-        process_thread.start()
+            print("Starting processor process")
+        processor_process.start()
         
         time.sleep(1)
         if config['verbose']:
             print("Starting live exporter process")
-        live_thread.start()
+        live_export_process.start()
         
         # Maintenance scheduling (supervisor-controlled)
         last_purge_ts = float(config.get("last_purge", 0) or 0)
@@ -2727,10 +2648,10 @@ def main():
                     if stop_event is not None:
                         stop_event.set()
                     for proc, name in (
-                        (update_thread, "update"),
-                        (listener_thread, "listener"),
-                        (process_thread, "processor"),
-                        (live_thread, "live-export"),
+                        (update_process, "update"),
+                        (listener_process, "listener"),
+                        (processor_process, "processor"),
+                        (live_export_process, "live-export"),
                     ):
                         if not proc or getattr(proc, "pid", None) is None:
                             continue
@@ -2810,12 +2731,12 @@ def main():
                     maintenance_active = False
                     if stop_event is not None and hasattr(stop_event, "clear"):
                         stop_event.clear()
-                    update_thread, listener_thread, process_thread, live_thread = bootstrap_runtime()
+                    update_process, listener_process, processor_process, live_export_process = bootstrap_runtime()
                     if not args.no_update:
-                        update_thread.start()
-                    listener_thread.start()
-                    process_thread.start()
-                    live_thread.start()
+                        update_process.start()
+                    listener_process.start()
+                    processor_process.start()
+                    live_export_process.start()
                     print("[Maintenance] Completed and system restarted")
             try:
                 if stop_event is not None and stop_event.is_set() and not maintenance_active:
@@ -2877,13 +2798,13 @@ def main():
                 pass
         
         try:
-            _shutdown_proc(update_thread, "update")
-            _shutdown_proc(listener_thread, "listener")
-            _shutdown_proc(process_thread, "processor")
-            _shutdown_proc(live_thread, "live exporter")
+            _shutdown_proc(update_process, "update")
+            _shutdown_proc(listener_process, "listener")
+            _shutdown_proc(processor_process, "processor")
+            _shutdown_proc(live_export_process, "live exporter")
         except KeyboardInterrupt:
             print("CTRL-C again, forcing termination.")
-            for proc in (update_thread, listener_thread, process_thread, live_thread):
+            for proc in (update_process, listener_process, processor_process, live_export_process):
                 try:
                     if getattr(proc, "pid", None) is not None and proc.is_alive():
                         proc.terminate()
