@@ -25,17 +25,16 @@ from sqlalchemy import text
 # ssl._create_default_https_context = ssl._create_unverified_context
 
 try:
-    import cache
     import commands
     import trade
-    import tradedb
+    from tradeorm import TradeORM
     import tradeenv
     import transfers
     import plugins.spansh_plug
     # New SQLAlchemy DB API (repo-local)
     from db import load_config as load_db_config, make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
 except ImportError:
-    from tradedangerous import cli as trade, cache, tradedb, tradeenv, transfers, plugins, commands
+    from tradedangerous import cli as trade, tradeenv, transfers, plugins, commands, TradeORM
     from tradedangerous.plugins import spansh_plug
     from tradedangerous.db import load_config as load_db_config, make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
 
@@ -489,7 +488,7 @@ def run_update(stop, cfg, spansh_busy_event=None, refresh_event=None):
         run_immediately = False
         
         try:
-            tdb = tradedb.TradeDB(load=False)
+            tdb = TradeORM()
             update_file = Path(tdb.tdenv.tmpDir, _SPANSH_FILE)
             
             if spansh_busy is not False and hasattr(spansh_busy, "set"):
@@ -2365,7 +2364,7 @@ def bootstrap_runtime():
     
     if config['verbose']:
         print("Loading TradeDB")
-    tdb = tradedb.TradeDB(load = False)
+    tdb = TradeORM()
     
     validate_config()
     if config['verbose']:

@@ -25,10 +25,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 
 try:
-    import cache
     import commands
     import trade
-    import tradedb
+    from tradeorm import TradeORM
     import tradeenv
     import transfers
     import plugins.eddblink_plug
@@ -36,7 +35,7 @@ try:
     from db import load_config as load_db_config
     from db import make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
 except ImportError:
-    from tradedangerous import cli as trade, cache, tradedb, tradeenv, transfers, plugins, commands
+    from tradedangerous import cli as trade, tradeenv, transfers, plugins, commands, TradeORM
     from tradedangerous.plugins import eddblink_plug
     from tradedangerous.db import load_config as load_db_config
     from tradedangerous.db import make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
@@ -839,7 +838,7 @@ def bootstrap_runtime():
     
     if config['verbose']:
         print("Loading TradeDB")
-    tdb = tradedb.TradeDB(load=False)
+    tdb = TradeORM()
     
     eddb_inst = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv())
     globals()['eddbPath'] = eddb_inst.dataPath
