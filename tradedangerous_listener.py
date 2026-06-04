@@ -3,6 +3,7 @@
 import os
 import json
 import time
+import gzip
 import zlib
 import zmq
 import multiprocessing
@@ -73,7 +74,12 @@ def init_db(cfg=None):
 _minute = 60
 _hour = 3600
 _SPANSH_FILE = "galaxy_stations.json"
-_SOURCE_URL = f'https://downloads.spansh.co.uk/{_SPANSH_FILE}'
+# Remote is the gzipped dump (~3.8 GiB) rather than the raw JSON (~20 GiB).
+# We fetch the compressed artefact and stream-decompress it into TD_TMP, so the
+# plugin still receives a plain galaxy_stations.json (the local name above).
+# Both URLs carry the same Last-Modified, so the freshness/maxage logic is
+# unaffected by the switch.
+_SOURCE_URL = f'https://downloads.spansh.co.uk/{_SPANSH_FILE}.gz'
 # print(f'Spansh import plugin source file is: {_SOURCE_URL}')
 
 @contextmanager
@@ -519,14 +525,24 @@ def run_update(stop, cfg, spansh_busy_event=None, refresh_event=None):
                     tmp_file.unlink()
                 
                 started = time.time()
+                compressed_bytes = 0
                 try:
                     req = request.Request(_SOURCE_URL, headers={"User-Agent": "TradeDangerous"})
-                    with request.urlopen(req, timeout=60) as resp, open(tmp_file, "wb") as out:
-                        while True:
-                            chunk = resp.read(8 * 1024 * 1024)
-                            if not chunk:
-                                break
-                            out.write(chunk)
+                    # Fetch the gzipped dump and decompress on the fly: only the
+                    # ~3.8 GiB compressed stream crosses the wire, while the file
+                    # written to TD_TMP is the plain JSON the plugin expects.
+                    # GzipFile raises on a truncated or corrupt stream, so a
+                    # failed download aborts loudly here rather than leaving a
+                    # partial JSON behind.
+                    with request.urlopen(req, timeout=60) as resp:
+                        compressed_bytes = int(resp.getheader("Content-Length") or 0)
+                        with gzip.GzipFile(fileobj=resp, mode="rb") as gz, \
+                                open(tmp_file, "wb") as out:
+                            while True:
+                                chunk = gz.read(8 * 1024 * 1024)
+                                if not chunk:
+                                    break
+                                out.write(chunk)
                     os.replace(tmp_file, update_file)
                 finally:
                     if tmp_file.exists():
@@ -537,7 +553,13 @@ def run_update(stop, cfg, spansh_busy_event=None, refresh_event=None):
                 
                 elapsed = time.time() - started
                 size = update_file.stat().st_size
-                print(f"[Spansh] Download complete: {size} bytes in {elapsed:.1f}s")
+                if compressed_bytes:
+                    print(
+                        f"[Spansh] Download complete: {compressed_bytes} bytes "
+                        f"compressed -> {size} bytes JSON in {elapsed:.1f}s"
+                    )
+                else:
+                    print(f"[Spansh] Download complete: {size} bytes in {elapsed:.1f}s")
             
             # Keep existing maxage logic bounded (unchanged semantics from baseline).
             last_update_ts = cfg.get("last_update", 0)
