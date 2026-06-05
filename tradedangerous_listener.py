@@ -34,10 +34,12 @@ try:
     import plugins.spansh_plug
     # New SQLAlchemy DB API (repo-local)
     from db import load_config as load_db_config, make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
+    from db.station_types import DRAKE_CLASS_CARRIER, MEGA_SHIP
 except ImportError:
     from tradedangerous import cli as trade, tradeenv, transfers, plugins, commands, TradeORM
     from tradedangerous.plugins import spansh_plug
     from tradedangerous.db import load_config as load_db_config, make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
+    from tradedangerous.db.station_types import DRAKE_CLASS_CARRIER, MEGA_SHIP
 
 from urllib import request
 from calendar import timegm
@@ -2328,16 +2330,15 @@ def update_dicts():
             system_names[int(system['unq:system_id'])] = system['name'].upper()
             system_ids[system['name'].upper()] = int(system['unq:system_id'])
     station_ids = dict()
-    megaship_types = [19, 24]
+    megaship_types = [DRAKE_CLASS_CARRIER, MEGA_SHIP]
     with open(str(dataPath / Path("Station.csv")), "r", encoding = "utf8") as fh:
         stations = csv.DictReader(fh, quotechar = "'")
         for station in stations:
-            # Mobile stations can move between systems. The mobile stations
-            # have the following data in their entry in stations.jsonl:
-            # "type_id":19,"type":"Megaship"
-            # Except for that one Orbis station.
-            # And now Fleet Carriers, they're type 24.
-            if int(station['type_id']) in megaship_types or int(station['unq:station_id']) == 42041:
+            # Mobile stations (megaships and fleet carriers) can move between
+            # systems, so we key them by name alone rather than system+name.
+            # They're identified by type_id, using the shared station_types
+            # constants so this stays in step with the rest of TD.
+            if int(station['type_id']) in megaship_types:
                 full_name = "MEGASHIP"
             else:
                 full_name = system_names[int(station['system_id@System.system_id'])]
