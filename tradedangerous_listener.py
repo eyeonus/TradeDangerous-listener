@@ -8,7 +8,7 @@ import zlib
 import zmq
 import multiprocessing
 import signal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import csv
 import codecs
 import configparser
@@ -53,6 +53,10 @@ _DATA_DIR = None
 _BACKEND = ""
 _SessionFactory = None
 _CONFIG_FILENAME = "tradedangerous-listener-config.json"
+
+def utcnow_naive():
+    """Current UTC time with no tzinfo — drop-in for the deprecated datetime.utcnow()."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 def get_config_path():
     env_path = os.environ.get("TD_LISTENER_CONFIG")
@@ -619,7 +623,7 @@ def run_update(stop, cfg, spansh_busy_event=None, refresh_event=None):
                         print(f"[Update] WARNING: failed to signal dict refresh: {e!r}")
                 # from_live semantic: "delta since last published dump".
                 # Draw the line in the sand immediately before publishing the new dump.
-                dump_cutoff = datetime.utcnow()
+                dump_cutoff = utcnow_naive()
                 
                 print("[Dump] Exporting listings.csv")
                 ok = run_dump_exporter(stop, cfg)
@@ -1207,7 +1211,7 @@ def process_messages_sa():
         try:
             payload = dict(payload)
             payload.setdefault("ts_epoch", time.time())
-            payload.setdefault("ts_utc", datetime.utcnow().isoformat(timespec="milliseconds") + "Z")
+            payload.setdefault("ts_utc", utcnow_naive().isoformat(timespec="milliseconds") + "Z")
             with open(diag_path, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(payload, default=str, ensure_ascii=False) + "\n")
         except Exception:
@@ -2532,7 +2536,7 @@ def purge_old_stationitems_sa(days: int = 30, batch_size: int = 200_000):
     if not isinstance(days, int) or days <= 0:
         return {"deleted": 0, "cutoff": None, "skipped": True}
     
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = utcnow_naive() - timedelta(days=days)
     total = 0
     
     with sa_session() as s:
