@@ -443,9 +443,14 @@ def run_update(stop, cfg, spansh_busy_event=None, refresh_event=None):
     """
     Batch update/import runner.
     
-    Every N hours (check_update_every_x_hour):
-      1) Run Spansh import
+    On startup:
+      1) Import the available/current Spansh dump
       2) If (and only if) Spansh succeeds, export listings.csv
+    
+    Every N hours after startup (check_update_every_x_hour):
+      1) Check the upstream Spansh dump Last-Modified timestamp
+      2) If it is newer than last_update, download and import it
+      3) If (and only if) Spansh succeeds, export listings.csv
     
     """
     global config, refresh_dicts_event, spansh_busy
@@ -499,31 +504,54 @@ def run_update(stop, cfg, spansh_busy_event=None, refresh_event=None):
                     break
             else:
                 time.sleep(interval_seconds)
+        startup_cycle = run_immediately
         run_immediately = False
         
         try:
             tdb = TradeORM()
             update_file = Path(tdb.tdenv.tmpDir, _SPANSH_FILE)
             
-            if spansh_busy is not False and hasattr(spansh_busy, "set"):
-                spansh_busy.set()
-            
-            # Ensure we have a local file to import. Refresh if remote is newer.
+            # Startup performs one bootstrap import/export cycle. Later cycles
+            # are gated by the upstream Last-Modified timestamp.
             last_modified = 0
             try:
                 req = request.Request(_SOURCE_URL, method="HEAD")
                 with request.urlopen(req, timeout=30) as response:
                     url_time = response.getheader("Last-Modified")
                 if url_time:
-                    last_modified = int(datetime.strptime(
+                    last_modified_dt = datetime.strptime(
                         url_time,
                         "%a, %d %b %Y %H:%M:%S %Z",
-                    ).timestamp())
+                    )
+                    last_modified = timegm(last_modified_dt.timetuple())
             except Exception as e:
                 print(f"[Spansh] WARNING: failed to read dump headers: {e!r}")
             
+            last_update_ts = int(cfg.get("last_update", 0) or 0)
+            if not last_modified:
+                if startup_cycle:
+                    print(
+                        "[Spansh] WARNING: missing/invalid Last-Modified; "
+                        "[Spansh] running startup bootstrap import without updating last_update"
+                    )
+                else:
+                    print(
+                        "[Spansh] WARNING: missing/invalid Last-Modified; "
+                        "[Spansh] skipping scheduled import"
+                    )
+                    continue
+            
+            if (
+                not startup_cycle
+                and last_update_ts
+                and last_modified <= last_update_ts
+            ):
+                print("[Spansh] No newer dump available; skipping import")
+                continue
+            
+            # Ensure we have the newer upstream file locally before importing.
             local_mod_time = 0 if not update_file.exists() else update_file.stat().st_mtime
-            if (not update_file.exists()) or (last_modified and local_mod_time < last_modified):
+            if (not update_file.exists()) or local_mod_time < last_modified:
                 if update_file.exists():
                     update_file.unlink()
                 
@@ -556,8 +584,7 @@ def run_update(stop, cfg, spansh_busy_event=None, refresh_event=None):
                     if tmp_file.exists():
                         tmp_file.unlink()
                 
-                if last_modified:
-                    os.utime(update_file, (last_modified, last_modified))
+                os.utime(update_file, (last_modified, last_modified))
                 
                 elapsed = time.time() - started
                 size = update_file.stat().st_size
@@ -570,7 +597,6 @@ def run_update(stop, cfg, spansh_busy_event=None, refresh_event=None):
                     print(f"[Spansh] Download complete: {size} bytes in {elapsed:.1f}s")
             
             # Keep existing maxage logic bounded (unchanged semantics from baseline).
-            last_update_ts = cfg.get("last_update", 0)
             if last_update_ts and last_update_ts > 0:
                 days_since = (datetime.now() - datetime.fromtimestamp(last_update_ts)) / timedelta(days=1)
                 maxage = min(days_since + 1.5, 30)
@@ -588,6 +614,9 @@ def run_update(stop, cfg, spansh_busy_event=None, refresh_event=None):
                 break
             
             log_interval = int(cfg.get('spansh_log_interval', 30) or 30)
+            
+            if spansh_busy is not False and hasattr(spansh_busy, "set"):
+                spansh_busy.set()
             
             try:
                 print("[Spansh] Running import")
