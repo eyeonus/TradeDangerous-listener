@@ -35,11 +35,13 @@ try:
     # New SQLAlchemy DB API (repo-local)
     from db import load_config as load_db_config, make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
     from db.station_types import DRAKE_CLASS_CARRIER, MEGA_SHIP
+    from corrections import normalize_str
 except ImportError:
     from tradedangerous import cli as trade, tradeenv, transfers, plugins, commands, TradeORM
     from tradedangerous.plugins import spansh_plug
     from tradedangerous.db import load_config as load_db_config, make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
     from tradedangerous.db.station_types import DRAKE_CLASS_CARRIER, MEGA_SHIP
+    from tradedangerous.corrections import normalize_str
 
 from urllib import request
 from calendar import timegm
@@ -1172,20 +1174,20 @@ def process_messages_sa():
     
     INSERT_NEW_STATION = text(
         "INSERT INTO Station ("
-        " station_id, name, system_id, ls_from_star,"
+        " station_id, name, lookup_name, system_id, ls_from_star,"
         " blackmarket, max_pad_size, market, shipyard,"
         " modified, outfitting, rearm, refuel, repair,"
         " planetary, type_id)"
-        " VALUES (:station_id, :name, :system_id, :ls_from_star,"
+        " VALUES (:station_id, :name, :lookup_name, :system_id, :ls_from_star,"
         " :blackmarket, :max_pad_size, :market, :shipyard,"
         " :modified, :outfitting, :rearm, :refuel, :repair,"
         " :planetary, :type_id)"
     )
-    
+
     DELETE_STATION = text("DELETE FROM Station WHERE station_id = :sid")
-    MOVE_STATION = text("UPDATE Station SET system_id = :system_id, name = :name WHERE station_id = :sid")
+    MOVE_STATION = text("UPDATE Station SET system_id = :system_id, name = :name, lookup_name = :lookup_name WHERE station_id = :sid")
     MOVE_STATION_AND_ID = text(
-        "UPDATE Station SET station_id = :new_sid, system_id = :system_id, name = :name WHERE station_id = :sid"
+        "UPDATE Station SET station_id = :new_sid, system_id = :system_id, name = :name, lookup_name = :lookup_name WHERE station_id = :sid"
     )
     GET_SYSTEM_ID_BY_NAME = text("SELECT system_id FROM System WHERE UPPER(name) = :n")
     
@@ -1886,6 +1888,7 @@ def process_messages_sa():
                                         "new_sid": int(station_id),
                                         "system_id": int(sys_id),
                                         "name": station,
+                                        "lookup_name": normalize_str(station),
                                         "sid": int(maybe_old),
                                     },
                                 )
@@ -1894,7 +1897,7 @@ def process_messages_sa():
                             else:
                                 s.execute(
                                     MOVE_STATION,
-                                    {"system_id": int(sys_id), "name": station, "sid": int(maybe_old)}
+                                    {"system_id": int(sys_id), "name": station, "lookup_name": normalize_str(station), "sid": int(maybe_old)}
                                 )
                                 station_ids[f'{system}/{station}'] = int(station_id)
                         else:
@@ -1903,6 +1906,7 @@ def process_messages_sa():
                             s.execute(INSERT_NEW_STATION, {
                                 "station_id": int(station_id),
                                 "name": station,
+                                "lookup_name": normalize_str(station),
                                 "system_id": int(sys_id),
                                 "ls_from_star": 999999,
                                 "blackmarket": '?',
@@ -1930,6 +1934,7 @@ def process_messages_sa():
                             s.execute(INSERT_NEW_STATION, {
                                 "station_id": int(station_id),
                                 "name": nm,
+                                "lookup_name": normalize_str(nm),
                                 "system_id": int(old_sys_id),
                                 "ls_from_star": ls,
                                 "blackmarket": bm,
