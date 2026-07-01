@@ -25,21 +25,22 @@ from sqlalchemy.orm import Session, sessionmaker
 
 
 try:
-    import cache
     import commands
     import trade
-    import tradedb
+    from tradeorm import TradeORM
     import tradeenv
     import transfers
     import plugins.eddblink_plug
     # New SQLAlchemy DB API (repo-local)
     from db import load_config as load_db_config
     from db import make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
+    from corrections import normalize_str
 except ImportError:
-    from tradedangerous import cli as trade, cache, tradedb, tradeenv, transfers, plugins, commands
+    from tradedangerous import cli as trade, tradeenv, transfers, plugins, commands, TradeORM
     from tradedangerous.plugins import eddblink_plug
     from tradedangerous.db import load_config as load_db_config
     from tradedangerous.db import make_engine_from_config, get_session_factory, ensure_fresh_db, resolve_data_dir
+    from tradedangerous.corrections import normalize_str
 
 from urllib import request
 
@@ -553,18 +554,18 @@ def process_messages_sa():
     
     INSERT_NEW_STATION = text(
         "INSERT INTO Station ("
-        " station_id, name, system_id, ls_from_star,"
+        " station_id, name, lookup_name, system_id, ls_from_star,"
         " blackmarket, max_pad_size, market, shipyard,"
         " modified, outfitting, rearm, refuel, repair,"
         " planetary, type_id)"
-        " VALUES (:station_id, :name, :system_id, :ls_from_star,"
+        " VALUES (:station_id, :name, :lookup_name, :system_id, :ls_from_star,"
         " :blackmarket, :max_pad_size, :market, :shipyard,"
         " :modified, :outfitting, :rearm, :refuel, :repair,"
         " :planetary, :type_id)"
     )
-    
+
     DELETE_STATION = text("DELETE FROM Station WHERE station_id = :sid")
-    MOVE_STATION = text("UPDATE Station SET system_id = :system_id, name = :name WHERE station_id = :sid")
+    MOVE_STATION = text("UPDATE Station SET system_id = :system_id, name = :name, lookup_name = :lookup_name WHERE station_id = :sid")
     GET_SYSTEM_ID_BY_NAME = text("SELECT system_id FROM System WHERE UPPER(name) = :n")
     
     def _safe_int(v, default=0):
@@ -667,6 +668,7 @@ def process_messages_sa():
                         s.execute(INSERT_NEW_STATION, {
                             "station_id": station_id,
                             "name": name,
+                            "lookup_name": normalize_str(name),
                             "system_id": sys_id,
                             "ls_from_star": ls_from_star,
                             "blackmarket": _bool_from_yn(blackmarket),
@@ -687,7 +689,7 @@ def process_messages_sa():
                             current_system_id = current[12]
                             correct_system_id = system_ids.get(system)
                             if correct_system_id and current_system_id and int(current_system_id) != int(correct_system_id):
-                                s.execute(MOVE_STATION, {"system_id": correct_system_id, "name": station, "sid": station_id})
+                                s.execute(MOVE_STATION, {"system_id": correct_system_id, "name": station, "lookup_name": normalize_str(station), "sid": station_id})
                     
                     s.execute(DELETE_STATION_ITEMS, {"station_id": station_id})
                     
@@ -839,7 +841,7 @@ def bootstrap_runtime():
     
     if config['verbose']:
         print("Loading TradeDB")
-    tdb = tradedb.TradeDB(load=False)
+    tdb = TradeORM()
     
     eddb_inst = plugins.eddblink_plug.ImportPlugin(tdb, tradeenv.TradeEnv())
     globals()['eddbPath'] = eddb_inst.dataPath
